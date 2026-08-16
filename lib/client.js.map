@@ -1,0 +1,1 @@
+{"version":3,"file":"client.js","names":["ctx: Context"],"sources":["../src/client/index.tsx"],"sourcesContent":["import type { Context } from '@deepseek-ai/cordis'\n\nexport const inject = ['slots']\n\nexport function apply(ctx: Context): void {\n  void ctx\n}\n"],"mappings":";;;;;MAEa,SAAS,CAAC,OAAQ;AAExB,SAAS,MAAMA,KAAoB;AACxC,MAAK;AACN"}

@@ -1,0 +1,9 @@
+# skill-injector-plugin — bundle patch layer.
+# dsh.bundle.patch: when installed via `dsh plugin --profile web add <spec>`,
+# the profile boot merges this patch and mounts the plugin row. The row's
+# `name` references the package; Node resolution finds lib/index.js (host
+# half), and the client-modules scanner discovers exports["./client"]
+# (lib/client.js) via the dsh.client declaration.
+- insert:
+    - id: skill-injector-plugin
+      name: 'skill-injector-plugin'

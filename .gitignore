@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+# pnpm
+.pnpm-store/
+# Logs
+*.log
+# Editor/OS
+.DS_Store
+Thumbs.db
