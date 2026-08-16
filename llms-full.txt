@@ -1,0 +1,217 @@
+# skill-injector-plugin · Auto-Inject Skills into DeepSeek Harness (DSH)
+
+> Auto-inject user-chosen skills (e.g. `/caveman`, `/ponytail`) into every DSH session — every prompt or once at session start — with a settings page and a composer indicator. 在 DSH 会话中自动注入所选技能（如 /caveman、/ponytail）：每轮提示或仅在会话开始时，含设置页与输入区指示。
+>
+> 中文文档: [README.zh.md](README.zh.md) · LLM index: [llms.txt](llms.txt) · Agent guide: [AGENTS.md](AGENTS.md)
+
+![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ready-4c8dff) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-✓-0f1115) ![license](https://img.shields.io/badge/license-MIT-green) ![install](https://img.shields.io/badge/dsh%20plugin%20add-✓-22c55e)
+
+**Keywords**: `dsh-plugin` · `deepseek-harness-plugin` · skills · skill-injection · caveman · ponytail
+
+---
+
+## 📑 Table of Contents
+
+- [✨ Features](#-features)
+- [🏗️ How it works](#️-how-it-works)
+- [🚀 Quick start](#-quick-start)
+- [⚙️ Configuration](#️-configuration)
+- [❓ FAQ](#-faq)
+- [⚠️ Security notes](#️-security-notes)
+- [📦 Project structure](#-project-structure)
+- [🙏 Credits](#-credits)
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+| --- | --- |
+| ⚙️ **Settings page** | Settings → Skill Injector: checkbox list of available skills, injection-mode radio, save; shows missing skills + active-in-session status |
+| 🪧 **Composer indicator** | One line under the chat input: `Skills: caveman, ponytail · every prompt`, refreshed every 5s |
+| 🔁 **Two injection modes** | `each-prompt` (system-prompt section, re-rendered every request) vs `start-only` (one durable skill-invocation message stamped at session start) |
+| 📚 **Live skill registry** | Reads skill bodies from `ctx.skills` at load time; no copied files; deleted skills degrade gracefully (listed as missing) |
+| 🧩 **Subagents included** | Injection applies to subagents too (consistent voice; no filtering) |
+| 🌗 **Theme-aware** | All colors use `--dsw-alias-*` design tokens |
+| ♨️ **Survives restarts** | Real profile-bundled plugin: install once with `dsh plugin add`, auto-loads on every DSH boot — no per-session define, no cordis_define |
+
+## 🏗️ How it works
+
+```
+Settings page (browser)
+  └─ user picks skills + injection mode
+             │ PUT /skill-injector/api/config
+Host half (DSH process) ▼
+  └─ skill-injector settings namespace (mode + selected)
+  └─ ctx.skills.get(name) → live skill bodies from the skill registry
+  └─ each-prompt: systemPrompt.section (re-rendered every request)
+     OR start-only: agent.inject() on agent/session-start (one stamp per skill)
+  └─ webServer route GET /skill-injector/api → JSON snapshot
+             │
+Client bundle (browser) ▼
+  └─ single 5s poller → fetch(/skill-injector/api)
+       ├─ settings.section (id skill-injector)              → checkbox list + mode radio + save
+       └─ conversation.composer.dock (id skill-injector-dock) → active-skills line
+```
+
+- **Pure pull model**: no push, no events driving the UI — the client polls `/skill-injector/api` every 5s and the host re-reads `ctx.skills` on demand; a missing skill file shows up as `missing` in the snapshot and the UI lists it, polling self-recovers.
+- **Live registry**: injection always reads the skill bodies from `ctx.skills` at load time — nothing is copied into this package, so skill edits are picked up and deleted skills degrade gracefully.
+- **Persistence**: ships `dsh.bundle` (`cordis.patch.yml`) + `dsh.client` (`exports["./client"]`, bundled) so it installs as a real profile plugin that DSH loads on every boot.
+
+## 🚀 Quick start
+
+### Standard install: `dsh plugin add` (persists across restarts)
+
+Install the package from a local checkout (or from GitHub once published):
+
+```bash
+# local directory (from the parent of this repo):
+dsh plugin --profile web add ./skill-injector-plugin
+
+# or directly from GitHub (any DSH machine):
+dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.git
+```
+
+`dsh plugin add` is a pnpm add into the profile plus a `dsh.profile.bundles` reconcile: seeing this package's `dsh.bundle` declaration, it appends `skill-injector-plugin` to the bundle stack. **Restart DSH** (or hard-refresh). On boot the client-modules scanner resolves `exports["./client"]` and the settings page + dock line appear. No per-session define, survives restarts.
+
+### Manual profile mount (alternative)
+
+1. `git clone <repo-url>` (any location).
+2. Add to `~/.dsh/profiles/web/package.json` `dependencies`: `"skill-injector-plugin": "link:<repo-path>"`, then `pnpm install` in the profile dir.
+3. Restart DSH.
+
+### Requirements
+
+- Skills exist in `~/.agents/skills` (or another configured skill root the `ctx.skills` registry reads).
+- No skill selected → nothing is injected; the dock line shows `Skills: none` and the settings page still works.
+
+## ⚙️ Configuration
+
+No config file. Settings live in the `skill-injector` settings namespace, edited from Settings → Skill Injector and persisted in the user settings document:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `'each-prompt'` | Injection mode: `'each-prompt'` (system-prompt section, every request) or `'start-only'` (one stamped message at session start) |
+| `selected` | `[]` | Kebab-case skill names to inject (max 16, validated; duplicates deduped) |
+
+The namespace is registered via `ctx.settings.register('skill-injector', schema, { base })` — the stored user section layers over the base automatically, so an empty/invalid stored value falls back to `{ mode: 'each-prompt', selected: [] }`.
+
+## ❓ FAQ
+
+**Q: Why don't my settings apply to the session I already have open?**
+A: In `each-prompt` mode the section is re-rendered per request, so the next request picks it up. In `start-only` mode the stamp is written once at session start — it applies to sessions started after the change, not the one already open.
+
+**Q: What happens when a skill file is deleted?**
+A: The skill is dropped from injection and listed under "Missing skills" on the settings page; every other selected skill keeps working. Restore the file and the next refresh picks it up again.
+
+**Q: Do subagents follow the injected skills?**
+A: Yes — injection applies to subagents too, by design, with no origin filtering. The chosen voice is consistent across the whole agent tree.
+
+**Q: What is the token cost?**
+A: The skill content is sent every request either way: `each-prompt` keeps it in the system prompt, `start-only` in one stamped message; both are visible to the model on every turn. Select only the skills you actually want active.
+
+**Q: How do I remove it?**
+A: `dsh plugin --profile web rm skill-injector-plugin` (or delete the profile dependency + bundle entry) and restart DSH.
+
+## ⚠️ Security notes
+
+- The plugin is **read-only** over the skill registry — it never writes, renames, or deletes skill files.
+- The selection is stored in the **user settings document** (same store as other DSH settings).
+- Injected content is the skill's **own trusted local markdown**; nothing is fetched from the network.
+- In the `each-prompt` (system-prompt section) path, `{{` in skill bodies is escaped to keep strict variable interpolation from failing; `start-only` messages are not interpolated, so they keep the raw content.
+
+## 📦 Project structure
+
+```
+skill-injector-plugin/
+├── src/
+│   ├── index.ts            # host half: settings namespace, skill cache, section + session-start injection, routes
+│   ├── helpers.ts          # pure helpers: validateSelection, escapePromptBraces, buildInjectionMessage
+│   └── client/index.tsx    # client bundle: 5s poller, settings form, dock line
+├── cordis.patch.yml        # dsh.bundle patch (inserts the plugin row on boot)
+├── tsdown.config.ts        # builds host (node ESM) + helpers + client (CJS ModuleLoader)
+├── package.json            # name, exports["./client"], dsh.client + dsh.bundle
+├── lib/                    # build output (index.js, helpers.js, client.js)
+├── tests/
+│   ├── helpers.test.mjs    # node:test unit tests against lib/helpers.js
+│   └── fixtures/           # real-shape skill definition sample
+├── AGENTS.md               # repository guide for AI agents
+├── llms.txt / llms-full.txt
+├── README.md / README.zh.md
+└── LICENSE
+```
+
+## 🙏 Credits
+
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — the DSH plugin/dynamic runtime, Slots, theme, webServer, client-modules.
+- [headroom-stats-plugin](https://github.com/headroomlabs-ai/headroom/) — packaged-plugin pattern reference (manifest, build, README structure).
+- [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — reference for the packaged client-plugin build pattern.
+
+## 📄 License
+
+[MIT](LICENSE)
+
+
+---
+
+# AGENTS.md — Guide for AI agents
+
+This file helps AI coding agents and LLM tooling understand and work with this repository quickly.
+
+## What this repo is
+
+`skill-injector-plugin` is a **packaged Cordis plugin for DeepSeek Harness (DSH)** that auto-injects user-chosen skills (e.g. `caveman`, `ponytail`) into sessions — either every prompt (`each-prompt` via a `systemPrompt.section`) or once at session start (`start-only` via `agent.inject()` on `agent/session-start`) — with a settings page and a composer dock line. It is a real profile-bundled plugin: `dsh.bundle` (`cordis.patch.yml`) mounts the host half, and the `dsh.client` declaration + `exports["./client"]` register the browser half — install once with `dsh plugin add`, loads on every DSH boot, no cordis_define. The host half owns a `skill-injector` settings namespace (`mode` + `selected`), reads skill bodies from the live `ctx.skills` registry, and serves the snapshot over `GET /skill-injector/api` (plus `PUT /skill-injector/api/config` for writes); the client half polls every 5s and renders a `settings.section` form and a `conversation.composer.dock` line. The client↔host seam is **HTTP only** — there is no `harness.handle`/`host.call` RPC for packaged plugins.
+
+## Repository layout
+
+| Path | Role |
+| --- | --- |
+| `src/index.ts` | Host half: `skill-injector` settings namespace (schemastery schema + base), `refreshCache` skill-body cache, `systemPrompt.section` (each-prompt, order 150) + `agent/session-start` injection (start-only, deduped), `webServer` routes `GET /skill-injector/api` + `PUT /skill-injector/api/config`. |
+| `src/helpers.ts` | Pure helpers (separate build entry for unit testing): `validateSelection`, `escapePromptBraces`, `buildInjectionMessage`, `isSkillName`, `MAX_SELECTED`, types. |
+| `src/client/index.tsx` | Client bundle: single 5s poller `fetch('/skill-injector/api')`, `settings.section` id `skill-injector` (order 60), `conversation.composer.dock` id `skill-injector-dock` (order 10). |
+| `cordis.patch.yml` | `dsh.bundle.patch`: inserts the plugin row `{id: skill-injector-plugin, name: 'skill-injector-plugin'}`. |
+| `tsdown.config.ts` | Builds host (node ESM → `lib/index.js`), helpers (node ESM → `lib/helpers.js`), client (browser CJS ModuleLoader closure → `lib/client.js`, bundle id = package name). |
+| `package.json` | `exports["./client"]`, `dsh.bundle.patch`, `dsh.client` (`platform: 'web'`, inject edges), peers react + @deepseek-ai/cordis + client runtime/slots, deps @deepseek-ai/dsh-llm + dsh-skill + schemastery. |
+| `tests/helpers.test.mjs` | node:test unit tests against `lib/helpers.js` (14 tests). |
+| `tests/fixtures/sample-skill.json` | Real-shape skill definition as `ctx.skills.get` returns it. |
+| `README.md` / `README.zh.md` | Human docs (en default, zh). |
+| `llms.txt` / `llms-full.txt` | LLM-friendly doc index / full text. |
+
+## Key behaviors (don't break these)
+
+1. **Packaged, not dynamic**: install via `dsh plugin add` (or profile `link:` dep + restart). Do NOT revert to a dynamic `cordis_define`-only shape.
+2. **Client talks to host over HTTP only**: the client bundle polls `/skill-injector/api` and PUTs `/skill-injector/api/config` (host `webServer` routes). Do not reintroduce the dynamic `harness.handle`/`host.call` seam — it does not exist for packaged plugins.
+3. **Read skill bodies from `ctx.skills`, never copy skill files**: `refreshCache` loads each selected skill via `skills.get(name, {})` and keeps bodies in an in-process `Map`; deleted skills are reported in `missing` and skipped — do not bundle skill content into the repo or cache it across restarts.
+4. **`escapePromptBraces` ONLY in the section path**: the `each-prompt` section escapes `{{` in skill bodies (`renderActiveSkills` → `escapePromptBraces(renderSkillContent(...))`) because section text goes through strict `{{variable}}` interpolation; `start-only` messages are NOT interpolated and must keep raw content (`buildInjectionMessage(name, renderSkillContent(skill))`).
+5. **Dedupe start-only stamps against `agent.session.events`**: `alreadyInHistory` scans the immutable session log for `user/message` events with `data.source.kind === 'skill-invocation'` and `data.source.name`; combined with the in-process `injectedByAgent` set so resumes/restarts never double-stamp.
+6. **Routes always return `{ok:false,error}` JSON**: both routes wrap handlers in try/catch and write JSON on every path (200 success, 400 invalid body/config, 500 unexpected) — never a non-JSON 500. The `PUT` config route validates via `validateSelection` before `settings.update`.
+7. **`refreshCache` is deduped (in-flight memo)**: concurrent calls share one pass via `refreshInFlight` (cleared in `.finally`) — do not remove; it prevents stampede refreshes on `settings/updated` + `skills/change`.
+8. **`injectedByAgent` is capped at 200**: entries are evicted oldest-first (`if (injectedByAgent.size > 200) injectedByAgent.delete(first key)`) — do not remove; it bounds memory across sessions.
+
+## Common tasks
+
+- **Change poll interval**: `POLL_MS = 5000` in `src/client/index.tsx`. Keep the Client using one interval.
+- **Add an injection mode**: extend the settings schema (`mode` union in `src/index.ts` + `MODES` in `src/helpers.ts`), the host branch (section vs session-start), the client radio (`si-modes`), and the tests in `tests/helpers.test.mjs`.
+- **Rebuild**: `pnpm install && pnpm build` (outputs `lib/index.js` + `lib/helpers.js` + `lib/client.js`).
+- **Update the live profile install**: rebuild, then restart DSH (host-half changes need restart; client changes hot-reload only for already-mounted bundles — a changed `lib/client.js` is re-hashed and re-served).
+
+## Environment facts (probed, do not re-probe)
+
+- **Packaged host plugins are real Node modules** (`cordis-plugin-loader` uses plain `import()`): `process.env`, `Date`, `Buffer`, and async iteration over `req` ARE available — unlike the dynamic-plugin sandbox. No cmd env-probe needed.
+- `webServer.register` route shape: `{kind: 'exact'|'prefix', path, handler(req, res)}` with node:http semantics; duplicate (kind, path) throws. Register inside `ctx.effect(() => …)` and RETURN the disposer.
+- The client bundle is plain browser JS (ModuleLoader CJS factory): `fetch`, `setInterval`, `document` are available; React comes from the module table (`external: react`), `React.createElement` only — no JSX.
+- Host event contracts: `agent/session-start` is emitted with `{ agent, source }`; `agent.id` is the session id, `agent.inject(message)` stamps a message, `agent.session.events` is the immutable log snapshot. `settings/updated` fires with the namespace string; `skills/change` fires when the registry invalidates.
+- `renderSkillContent` (canonical `<skill_content>` block) comes from `@deepseek-ai/dsh-skill`; `createUserMessage` comes from `@deepseek-ai/dsh-llm`.
+- Settings namespace via `ctx.settings.register(ns, z.object({...}), { base })` (schemastery `z`); `ctx.settings.get(ns)` returns the resolved value; `ctx.settings.update(ns, patch)` merges into the user section.
+
+## Testing
+
+- **Before restart**: verify the profile installed the bundle — `~/.dsh/profiles/web/package.json` `dependencies` and `dsh.profile.bundles` both list `skill-injector-plugin`; `lib/client.js` has the ModuleLoader wrapper (`id: "skill-injector-plugin"`); `lib/index.js` exports `name` + `apply`.
+- **After restart**: `GET /skill-injector/api` (in the browser, same origin) returns `{ok:true, mode, selected, available, missing, injected}`; Settings → Skill Injector toggles + Save; `each-prompt` affects the next reply; `start-only` stamps once per session and a resume after restart does not double-stamp; a deleted skill shows under missing and the rest keep injecting.
+- Unit tests: `node tests/helpers.test.mjs` (14 tests) against `lib/helpers.js` — run after `pnpm build` so `lib/` is fresh.
+
+## Notes for LLM crawlers
+
+- Listed under the GitHub topic `dsh-plugin`; packaged profile plugin for DeepSeek Harness.
+- Distinguishing traits: packaged (persists across restarts), live `ctx.skills` registry (no copied skill files), two injection modes (each-prompt section vs start-only stamped message), subagents included (no filtering), HTTP-only client↔host seam (`/skill-injector/api`).
+

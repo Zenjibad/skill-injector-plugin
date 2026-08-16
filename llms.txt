@@ -1,0 +1,34 @@
+# skill-injector-plugin
+
+> Auto-inject user-chosen skills (e.g. `/caveman`, `/ponytail`) into every DSH session — every prompt or once at session start — with a settings page and a composer indicator. 在 DSH 会话中自动注入所选技能（如 /caveman、/ponytail）：每轮提示或仅在会话开始时，含设置页与输入区指示。
+
+For the complete combined document, see [llms-full.txt](llms-full.txt). For human-readable docs, see [README.md](README.md) (English) and [README.zh.md](README.zh.md) (中文).
+
+## Key facts
+
+- [Repository](README.md): packaged Cordis plugin for DeepSeek Harness (DSH), MIT license, `dsh-plugin` topic.
+- [Install](README.md#-quick-start): packaged profile plugin — `dsh plugin --profile web add <spec>` (local dir or `git+https://github.com/<org>/skill-injector-plugin.git`), then restart DSH. `dsh.bundle` (`cordis.patch.yml`) mounts the host half; `dsh.client` + `exports["./client"]` register the browser half. Survives restarts, no cordis_define.
+- [Behavior](README.md#️-how-it-works): host reads skill bodies from the live `ctx.skills` registry and injects them two ways — `each-prompt` (a `systemPrompt.section` re-rendered every request) or `start-only` (one `agent.inject()` stamp per skill on `agent/session-start`, deduped). Serves the snapshot over `GET /skill-injector/api` (webServer route).
+- [UI seats](README.md#-features): `settings.section` id `skill-injector` (checkbox list + mode radio + save) and `conversation.composer.dock` id `skill-injector-dock` (active-skills line), fed by a single 5s poller.
+- [Configuration](README.md#️-configuration): the `skill-injector` settings namespace — `mode` (`'each-prompt'` default | `'start-only'`) and `selected` (kebab-case skill names, default `[]`, max 16) — persisted in the user settings document. No config file.
+- [Failure mode](README.md#-faq): deleted skill files degrade to a "missing" list on the settings page while the rest keep injecting; routes always return JSON (`{ok:false,error}`).
+
+## Documentation
+
+- [README.md (English)](README.md): features, quick start, how it works, configuration, FAQ, security notes.
+- [README.zh.md (中文)](README.zh.md): same content in Chinese.
+- [src/index.ts](src/index.ts): host half — settings namespace, skill cache, section + session-start injection, routes.
+- [src/helpers.ts](src/helpers.ts): pure helpers — `validateSelection`, `escapePromptBraces`, `buildInjectionMessage`.
+- [src/client/index.tsx](src/client/index.tsx): client bundle — 5s poller, settings form, dock line.
+- [AGENTS.md](AGENTS.md): repository guide for AI agents (layout, key behaviors, probed environment facts, testing).
+- [package.json](package.json): npm metadata with `dsh.bundle` + `dsh.client` manifests for `dsh plugin add`.
+
+## Source layout
+
+- [src/index.ts](src/index.ts): the host half — `skill-injector` settings namespace, `refreshCache`, `systemPrompt.section` (each-prompt), `agent/session-start` injection (start-only), `webServer` JSON routes.
+- [src/helpers.ts](src/helpers.ts): the pure helpers — selection validation, prompt-brace escaping, injection-message builder.
+- [src/client/index.tsx](src/client/index.tsx): the client bundle — single 5s poller, `React.createElement` settings form + dock line, `--dsw-alias-*` theming.
+- [cordis.patch.yml](cordis.patch.yml): `dsh.bundle` patch inserting the plugin row.
+- [tsdown.config.ts](tsdown.config.ts): builds host (node ESM) + helpers + client (CJS ModuleLoader closure).
+- [tests/helpers.test.mjs](tests/helpers.test.mjs): node:test unit tests against `lib/helpers.js` (14 tests).
+- [tests/fixtures/sample-skill.json](tests/fixtures/sample-skill.json): real-shape skill definition sample.
