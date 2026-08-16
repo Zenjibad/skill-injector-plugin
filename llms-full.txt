@@ -150,10 +150,6 @@ skill-injector-plugin/
 ## 📄 License
 
 [MIT](LICENSE)
-
-
----
-
 # AGENTS.md — Guide for AI agents
 
 This file helps AI coding agents and LLM tooling understand and work with this repository quickly.
@@ -214,4 +210,3 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 
 - Listed under the GitHub topic `dsh-plugin`; packaged profile plugin for DeepSeek Harness.
 - Distinguishing traits: packaged (persists across restarts), live `ctx.skills` registry (no copied skill files), two injection modes (each-prompt section vs start-only stamped message), subagents included (no filtering), HTTP-only client↔host seam (`/skill-injector/api`).
-
