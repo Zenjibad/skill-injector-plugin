@@ -144,7 +144,7 @@ skill-injector-plugin/
 ## 🙏 致谢
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) —— DSH 插件/动态运行时、Slots、主题、webServer、client-modules。
-- [headroom-stats-plugin](https://github.com/headroomlabs-ai/headroom/) —— 打包式插件模式参考（manifest、构建、README 结构）。
+- [headroom-stats-plugin](https://github.com/Zenjibad/headroom-stats-plugin) —— 打包式插件模式参考（manifest、构建、README 结构）。
 - [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) —— 打包式 client-plugin 构建模式参考。
 
 ## 📄 许可证

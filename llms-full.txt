@@ -144,12 +144,13 @@ skill-injector-plugin/
 ## 🙏 Credits
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — the DSH plugin/dynamic runtime, Slots, theme, webServer, client-modules.
-- [headroom-stats-plugin](https://github.com/headroomlabs-ai/headroom/) — packaged-plugin pattern reference (manifest, build, README structure).
+- [headroom-stats-plugin](https://github.com/Zenjibad/headroom-stats-plugin) — packaged-plugin pattern reference (manifest, build, README structure).
 - [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — reference for the packaged client-plugin build pattern.
 
 ## 📄 License
 
 [MIT](LICENSE)
+
 # AGENTS.md — Guide for AI agents
 
 This file helps AI coding agents and LLM tooling understand and work with this repository quickly.
@@ -178,6 +179,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 1. **Packaged, not dynamic**: install via `dsh plugin add` (or profile `link:` dep + restart). Do NOT revert to a dynamic `cordis_define`-only shape.
 2. **Client talks to host over HTTP only**: the client bundle polls `/skill-injector/api` and PUTs `/skill-injector/api/config` (host `webServer` routes). Do not reintroduce the dynamic `harness.handle`/`host.call` seam — it does not exist for packaged plugins.
 3. **Read skill bodies from `ctx.skills`, never copy skill files**: `refreshCache` loads each selected skill via `skills.get(name, {})` and keeps bodies in an in-process `Map`; deleted skills are reported in `missing` and skipped — do not bundle skill content into the repo or cache it across restarts.
+   - **Skill lookups MUST use the live agent's scope**: `@deepseek-ai/dsh-skill-filesystem` registers in the agent preset's layer (row `skill-filesystem` in `agent.cordis.yml`), NOT the host global layer. A host-scope `ctx.skills.list({})`/`get(name, {})` returns empty. Use `{ scope: <agent>, cwd: agent.session.header.cwd }` (captured from `agent/session-start`); do not revert to scopeless lookups.
 4. **`escapePromptBraces` ONLY in the section path**: the `each-prompt` section escapes `{{` in skill bodies (`renderActiveSkills` → `escapePromptBraces(renderSkillContent(...))`) because section text goes through strict `{{variable}}` interpolation; `start-only` messages are NOT interpolated and must keep raw content (`buildInjectionMessage(name, renderSkillContent(skill))`).
 5. **Dedupe start-only stamps against `agent.session.events`**: `alreadyInHistory` scans the immutable session log for `user/message` events with `data.source.kind === 'skill-invocation'` and `data.source.name`; combined with the in-process `injectedByAgent` set so resumes/restarts never double-stamp.
 6. **Routes always return `{ok:false,error}` JSON**: both routes wrap handlers in try/catch and write JSON on every path (200 success, 400 invalid body/config, 500 unexpected) — never a non-JSON 500. The `PUT` config route validates via `validateSelection` before `settings.update`.
@@ -199,6 +201,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 - Host event contracts: `agent/session-start` is emitted with `{ agent, source }`; `agent.id` is the session id, `agent.inject(message)` stamps a message, `agent.session.events` is the immutable log snapshot. `settings/updated` fires with the namespace string; `skills/change` fires when the registry invalidates.
 - `renderSkillContent` (canonical `<skill_content>` block) comes from `@deepseek-ai/dsh-skill`; `createUserMessage` comes from `@deepseek-ai/dsh-llm`.
 - Settings namespace via `ctx.settings.register(ns, z.object({...}), { base })` (schemastery `z`); `ctx.settings.get(ns)` returns the resolved value; `ctx.settings.update(ns, patch)` merges into the user section.
+- Host skill lookups need the agent scope (see Key behaviors): the plugin captures `agent` + `agent.session.header.cwd` at `agent/session-start` and passes them as lookup options. Before the first session-start the route reports `available: []` and nothing is cached (boot race, self-heals on the first session-start).
 
 ## Testing
 

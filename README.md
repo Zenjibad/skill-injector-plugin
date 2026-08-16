@@ -144,7 +144,7 @@ skill-injector-plugin/
 ## 🙏 Credits
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — the DSH plugin/dynamic runtime, Slots, theme, webServer, client-modules.
-- [headroom-stats-plugin](https://github.com/headroomlabs-ai/headroom/) — packaged-plugin pattern reference (manifest, build, README structure).
+- [headroom-stats-plugin](https://github.com/Zenjibad/headroom-stats-plugin) — packaged-plugin pattern reference (manifest, build, README structure).
 - [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) — reference for the packaged client-plugin build pattern.
 
 ## 📄 License
