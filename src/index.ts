@@ -106,32 +106,40 @@ export function apply(ctx: Context): void {
   /** agentId -> skill names stamped in start-only mode. */
   const injectedByAgent = new Map<string, string[]>()
   let currentAgentId: string | null = null
+  /** In-flight refresh promise so concurrent refreshCache calls share one pass. */
+  let refreshInFlight: Promise<string[]> | null = null
 
-  async function refreshCache(): Promise<string[]> {
-    const missing: string[] = []
-    const selected = config().selected
-    const next = new Map<string, SkillDef>()
-    for (const name of selected) {
-      try {
-        const skill = await skills.get(name, {})
-        if (skill === undefined || typeof skill.content !== 'string') {
+  function refreshCache(): Promise<string[]> {
+    if (refreshInFlight !== null) return refreshInFlight
+    refreshInFlight = (async (): Promise<string[]> => {
+      const missing: string[] = []
+      const selected = config().selected
+      const next = new Map<string, SkillDef>()
+      for (const name of selected) {
+        try {
+          const skill = await skills.get(name, {})
+          if (skill === undefined || typeof skill.content !== 'string') {
+            missing.push(name)
+            continue
+          }
+          next.set(name, {
+            name: skill.name,
+            description: skill.description,
+            content: skill.content,
+            provider: skill.provider,
+            ...(skill.resourceBase !== undefined ? { resourceBase: skill.resourceBase } : {}),
+          })
+        } catch {
           missing.push(name)
-          continue
         }
-        next.set(name, {
-          name: skill.name,
-          description: skill.description,
-          content: skill.content,
-          provider: skill.provider,
-          ...(skill.resourceBase !== undefined ? { resourceBase: skill.resourceBase } : {}),
-        })
-      } catch {
-        missing.push(name)
       }
-    }
-    cache.clear()
-    for (const [key, value] of next) cache.set(key, value)
-    return missing
+      cache.clear()
+      for (const [key, value] of next) cache.set(key, value)
+      return missing
+    })().finally(() => {
+      refreshInFlight = null
+    })
+    return refreshInFlight
   }
 
   /** Concatenated <skill_content> blocks for the selection (each-prompt path). */
@@ -196,6 +204,7 @@ export function apply(ctx: Context): void {
         }
       }
       injectedByAgent.set(agent.id, [...stamped])
+      if (injectedByAgent.size > 200) injectedByAgent.delete(injectedByAgent.keys().next().value as string)
     }),
   )
 
