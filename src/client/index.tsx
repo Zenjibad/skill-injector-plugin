@@ -194,9 +194,13 @@ export function apply(ctx: Context): void {
   function DockLine(): React.ReactElement | null {
     const snap = useSnapshot()
     if (snap === null || !snap.ok) return null
-    const modeLabel = snap.mode === 'start-only' ? 'start-only' : 'every prompt'
-    const label = snap.selected.length > 0 ? 'Skills: ' + snap.selected.join(', ') + ' · ' + modeLabel : 'Skills: none'
-    return React.createElement('div', { className: 'si-dock' }, label)
+    const names = snap.selected.length > 0 ? snap.selected.join(', ') : 'none'
+    return React.createElement(
+      'div',
+      { className: 'si-dock' },
+      React.createElement('div', null, 'Injected Skills: ' + names),
+      React.createElement('div', null, 'Mode: ' + snap.mode),
+    )
   }
 
   slots.inject('settings.section', () =>

@@ -101,11 +101,22 @@ export function apply(ctx: Context): void {
     return r.ok ? r.config : { mode: 'each-prompt', selected: [] }
   }
 
+  /** Skill lookups MUST use the live agent's scope: the filesystem provider
+   * registers in the agent preset's layer, so a host-global lookup is empty. */
+  function lookupOptions(): { scope: unknown; cwd?: string } | undefined {
+    if (currentAgent === null) return undefined
+    return currentAgent.cwd !== undefined
+      ? { scope: currentAgent.scope, cwd: currentAgent.cwd }
+      : { scope: currentAgent.scope }
+  }
+
   /** name -> loaded skill body for the current selection. */
   const cache = new Map<string, SkillDef>()
   /** agentId -> skill names stamped in start-only mode. */
   const injectedByAgent = new Map<string, string[]>()
   let currentAgentId: string | null = null
+  /** Live agent handle (used as the skills lookup scope) + its workspace cwd. */
+  let currentAgent: { scope: unknown; cwd?: string } | null = null
   /** In-flight refresh promise so concurrent refreshCache calls share one pass. */
   let refreshInFlight: Promise<string[]> | null = null
 
@@ -117,7 +128,7 @@ export function apply(ctx: Context): void {
       const next = new Map<string, SkillDef>()
       for (const name of selected) {
         try {
-          const skill = await skills.get(name, {})
+          const skill = await skills.get(name, lookupOptions())
           if (skill === undefined || typeof skill.content !== 'string') {
             missing.push(name)
             continue
@@ -187,6 +198,11 @@ export function apply(ctx: Context): void {
     c.on('agent/session-start', ({ agent }: { agent?: { id?: string; session?: unknown; inject?: (m: unknown) => void } }) => {
       if (agent?.id === undefined || agent.inject === undefined) return
       currentAgentId = agent.id
+      currentAgent = {
+        scope: agent,
+        cwd: (agent as { session?: { header?: { cwd?: string } } }).session?.header?.cwd,
+      }
+      void refreshCache()
       if (config().mode !== 'start-only') return
       const stamped = new Set(injectedByAgent.get(agent.id) ?? [])
       for (const name of config().selected) {
@@ -212,7 +228,7 @@ export function apply(ctx: Context): void {
     const cfg = config()
     let available: Array<{ name: string; description: string }> = []
     try {
-      available = (await skills.list({}))
+      available = (await skills.list(lookupOptions()))
         .filter(isModelInvocable)
         .map((s) => ({ name: s.name, description: s.description }))
     } catch {
