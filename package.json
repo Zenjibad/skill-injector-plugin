@@ -80,6 +80,6 @@
     "build": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && tsdown",
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/"
+    "test": "npm run build && node --test tests/"
   }
 }

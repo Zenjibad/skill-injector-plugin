@@ -50,6 +50,26 @@ test('validateSelection dedupes and rejects over cap', () => {
   assert.match(over.error, /16/)
 })
 
+test('validateSelection accepts empty selection', () => {
+  const r = validateSelection({ mode: 'each-prompt', selected: [] })
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.config, { mode: 'each-prompt', selected: [] })
+})
+
+test('validateSelection rejects missing mode', () => {
+  const r = validateSelection({ selected: ['caveman'] })
+  assert.equal(r.ok, false)
+})
+
+test('validateSelection rejects non-string entries', () => {
+  const r = validateSelection({ mode: 'each-prompt', selected: [42] })
+  assert.equal(r.ok, false)
+})
+
+test('validateSelection rejects array input', () => {
+  assert.equal(validateSelection([]).ok, false)
+})
+
 test('validateSelection rejects non-object input', () => {
   assert.equal(validateSelection(null).ok, false)
   assert.equal(validateSelection('nope').ok, false)

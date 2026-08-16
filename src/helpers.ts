@@ -37,15 +37,15 @@ export function validateSelection(
   if (!Array.isArray(raw.selected)) {
     return { ok: false, error: 'selected must be an array of skill names' }
   }
-  if (raw.selected.length > MAX_SELECTED) {
-    return { ok: false, error: `too many skills (max ${MAX_SELECTED})` }
-  }
   const selected: string[] = []
   for (const name of raw.selected) {
     if (typeof name !== 'string' || !isSkillName(name)) {
       return { ok: false, error: `invalid skill name "${String(name)}" (kebab-case required)` }
     }
     if (!selected.includes(name)) selected.push(name)
+  }
+  if (selected.length > MAX_SELECTED) {
+    return { ok: false, error: `too many skills (max ${MAX_SELECTED})` }
   }
   return { ok: true, config: { mode, selected } }
 }
