@@ -62,7 +62,7 @@ export function apply(ctx: Context): void {
     '.si-status{font-size:12px;opacity:.7}',
     '.si-error{color:var(--dsw-alias-state-error-primary);font-size:12px}',
     '.si-note{padding:16px;opacity:.7}',
-    '.si-dock{font-size:12px;opacity:.65;padding:2px 0}',
+    '.si-dock{font-size:12px;opacity:.65;padding:2px 0;white-space:nowrap}',
   ].join('')
   document.head.appendChild(style)
   ctx.effect(() => () => {
