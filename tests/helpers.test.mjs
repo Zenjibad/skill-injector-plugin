@@ -50,6 +50,14 @@ test('validateSelection dedupes and rejects over cap', () => {
   assert.match(over.error, /16/)
 })
 
+test('validateSelection cap applies after dedupe', () => {
+  const many = Array.from({ length: MAX_SELECTED }, (_, i) => 'skill-' + i)
+  const withDup = [...many, 'skill-0']
+  const r = validateSelection({ mode: 'each-prompt', selected: withDup })
+  assert.equal(r.ok, true)
+  assert.equal(r.config.selected.length, MAX_SELECTED)
+})
+
 test('validateSelection accepts empty selection', () => {
   const r = validateSelection({ mode: 'each-prompt', selected: [] })
   assert.equal(r.ok, true)
