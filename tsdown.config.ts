@@ -50,7 +50,6 @@ export default defineConfig([
     platform: 'node',
     target: 'es2024',
     dts: false,
-    clean: true,
   },
   clientBundle,
 ])
