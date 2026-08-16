@@ -198,8 +198,7 @@ export function apply(ctx: Context): void {
     return React.createElement(
       'div',
       { className: 'si-dock' },
-      React.createElement('div', null, 'Injected Skills: ' + names),
-      React.createElement('div', null, 'Mode: ' + snap.mode),
+      'Injected Skills: ' + names + ' · Mode: ' + snap.mode,
     )
   }
 
