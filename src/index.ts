@@ -16,7 +16,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { renderSkillContent, type SkillResourceBase } from '@deepseek-ai/dsh-skill'
+import { isModelInvocable, renderSkillContent, type SkillResourceBase, type SkillSummary } from '@deepseek-ai/dsh-skill'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   buildInjectionMessage,
@@ -73,7 +73,7 @@ type HostCtx = {
     update(ns: string, patch: Partial<InjectorConfig>): Promise<void>
   }
   skills: {
-    list(options?: Record<string, unknown>): Promise<Array<{ name: string; description: string }>>
+    list(options?: Record<string, unknown>): Promise<SkillSummary[]>
     get(name: string, options?: Record<string, unknown>): Promise<SkillDef | undefined>
   }
   systemPrompt: {
@@ -212,7 +212,9 @@ export function apply(ctx: Context): void {
     const cfg = config()
     let available: Array<{ name: string; description: string }> = []
     try {
-      available = (await skills.list({})).map((s) => ({ name: s.name, description: s.description }))
+      available = (await skills.list({}))
+        .filter(isModelInvocable)
+        .map((s) => ({ name: s.name, description: s.description }))
     } catch {
       available = []
     }
