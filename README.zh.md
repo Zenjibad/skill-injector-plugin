@@ -27,10 +27,10 @@
 
 | 功能 | 说明 |
 | --- | --- |
-| ⚙️ **设置页** | 设置 → Skill Injector：可用技能复选框列表、注入模式单选、保存；显示缺失技能与会话内激活状态 |
+| ⚙️ **设置页** | 设置 → Skill Injector：可用技能复选框列表、注入模式单选、保存；未注入的技能逐条列出原因并提供“重试”（建立会话作用域后还提供“移除”） |
 | 🪧 **输入区指示** | 聊天输入框下方一行：`Skills: caveman, ponytail · every prompt`，每 5 秒刷新 |
 | 🔁 **两种注入模式** | `each-prompt`（系统提示词分区，每次请求重新渲染）vs `start-only`（会话开始时盖戳一条持久的技能调用消息） |
-| 📚 **实时技能注册表** | 加载时从 `ctx.skills` 读取技能正文；不复制任何文件；技能被删除时优雅降级（列为缺失） |
+| 📚 **实时技能注册表** | 加载时从 `ctx.skills` 读取技能正文；不复制任何文件；每个已选技能都会被分类（`ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`），暂时性失败会继续注入上一次的正文 |
 | 🧩 **包含子代理** | 注入同样作用于子代理（语气一致；不过滤） |
 | 🌗 **主题自适应** | 所有颜色使用 `--dsw-alias-*` 设计令牌 |
 | ♨️ **重启不丢失** | 真正的 profile 打包插件：用 `dsh plugin add` 安装一次，每次 DSH 启动自动加载——无需会话级 define，无需 cordis_define |
@@ -54,7 +54,8 @@ Client bundle（浏览器） ▼
        └─ conversation.composer.dock（id skill-injector-dock）→ 激活技能行
 ```
 
-- **纯拉取模型**：无推送、无事件驱动 UI——客户端每 5 秒轮询 `/skill-injector/api`，Host 按需重读 `ctx.skills`；技能文件缺失时在快照中体现为 `missing`，界面列出该技能，轮询自动恢复。
+- **纯拉取模型**：无推送、无事件驱动 UI——客户端每 5 秒轮询 `/skill-injector/api`，Host 按需重读 `ctx.skills`；快照的 `unresolved` 数组为每个技能给出原因，轮询本身就是自动重试，设置页另提供手动“重试”与“移除”。
+- **暂时性失败保留上一次正文**：提供方报错、发现未完成或尚未建立作用域时，继续注入上次加载的正文。只有“完整且带作用域的目录读取未列出该名称”才会标记为 `unknown` 并被丢弃。
 - **实时注册表**：注入始终在加载时从 `ctx.skills` 读取技能正文——本包不复制任何内容，因此技能修改会被拾取，被删除的技能优雅降级。
 - **持久化**：随附 `dsh.bundle`（`cordis.patch.yml`）+ `dsh.client`（`exports["./client"]`，已打包），作为真正的 profile 插件安装，DSH 每次启动都会加载。
 
@@ -102,7 +103,10 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 答：`each-prompt` 模式下分区按请求重新渲染，下一次请求即生效。`start-only` 模式在会话开始时一次性盖戳——只作用于更改之后新建的会话，不影响已打开的会话。
 
 **问：技能文件被删除会怎样？**
-答：该技能停止注入，并在设置页的“缺失技能”中列出；其余已选技能继续工作。恢复文件后，下一次刷新会重新拾取。
+答：下一次完整且带作用域的目录读取会把它标记为 `unknown`（`not in the skill catalog`），它停止注入，设置页在 **Unresolved** 中列出并提供**移除**按钮——因此过期的名称总能清掉。其余已选技能继续工作。恢复文件后，下一次刷新会重新拾取。
+
+**问：设置页显示 `unavailable` 或 `no-scope`，是不是我的技能没了？**
+答：不是。`unavailable` 表示提供方发现未完成；`no-scope` 表示还没有会话建立查询作用域（进程的第一条消息之前属正常）。两者都是暂时状态：技能继续注入上一次的正文，下一次刷新即恢复。**重试**会立刻重新刷新，而**移除**只在带作用域的读取真正执行过之后才出现。
 
 **问：子代理会遵循注入的技能吗？**
 答：会——注入默认同样作用于子代理，不做来源过滤。所选语气在整个代理树中保持一致。
@@ -125,8 +129,8 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 ```
 skill-injector-plugin/
 ├── src/
-│   ├── index.ts            # Host 半部：设置命名空间、技能缓存、分区 + 会话启动注入、路由
-│   ├── helpers.ts          # 纯函数：validateSelection、escapePromptBraces、buildInjectionMessage
+│   ├── index.ts            # Host 半部：设置命名空间、resolveSelection（分类 + 上一次正文）、分区 + 会话启动注入、路由
+│   ├── helpers.ts          # 纯函数：validateSelection、escapePromptBraces、buildInjectionMessage、classifySelection、applyBodies
 │   └── client/index.tsx    # Client bundle：5 秒轮询、设置表单、输入区指示行
 ├── cordis.patch.yml        # dsh.bundle 补丁（启动时插入插件行）
 ├── tsdown.config.ts        # 构建 Host（node ESM）+ helpers + Client（CJS ModuleLoader）
@@ -134,6 +138,7 @@ skill-injector-plugin/
 ├── lib/                    # 构建产物（index.js、helpers.js、client.js）
 ├── tests/
 │   ├── helpers.test.mjs    # 针对 lib/helpers.js 的 node:test 单元测试
+│   ├── host.test.mjs       # 用桩 ctx 驱动 apply() 的 node:test 冒烟测试
 │   └── fixtures/           # 真实形态的技能定义样例
 ├── AGENTS.md               # 面向 AI agent 的仓库指引
 ├── llms.txt / llms-full.txt

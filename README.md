@@ -27,10 +27,10 @@
 
 | Feature | Description |
 | --- | --- |
-| ⚙️ **Settings page** | Settings → Skill Injector: checkbox list of available skills, injection-mode radio, save; shows missing skills + active-in-session status |
+| ⚙️ **Settings page** | Settings → Skill Injector: checkbox list of available skills, injection-mode radio, save; unresolved skills are listed with the reason and a Retry button (plus Remove once a session has established scope) |
 | 🪧 **Composer indicator** | One line under the chat input: `Skills: caveman, ponytail · every prompt`, refreshed every 5s |
 | 🔁 **Two injection modes** | `each-prompt` (system-prompt section, re-rendered every request) vs `start-only` (one durable skill-invocation message stamped at session start) |
-| 📚 **Live skill registry** | Reads skill bodies from `ctx.skills` at load time; no copied files; deleted skills degrade gracefully (listed as missing) |
+| 📚 **Live skill registry** | Reads skill bodies from `ctx.skills` at load time; no copied files; each selected skill is classified (`ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`) and a transient failure keeps injecting the last-good body |
 | 🧩 **Subagents included** | Injection applies to subagents too (consistent voice; no filtering) |
 | 🌗 **Theme-aware** | All colors use `--dsw-alias-*` design tokens |
 | ♨️ **Survives restarts** | Real profile-bundled plugin: install once with `dsh plugin add`, auto-loads on every DSH boot — no per-session define, no cordis_define |
@@ -54,7 +54,8 @@ Client bundle (browser) ▼
        └─ conversation.composer.dock (id skill-injector-dock) → active-skills line
 ```
 
-- **Pure pull model**: no push, no events driving the UI — the client polls `/skill-injector/api` every 5s and the host re-reads `ctx.skills` on demand; a missing skill file shows up as `missing` in the snapshot and the UI lists it, polling self-recovers.
+- **Pure pull model**: no push, no events driving the UI — the client polls `/skill-injector/api` every 5s and the host re-reads `ctx.skills` on demand; the snapshot's `unresolved` array carries a reason per skill, the poll is the automatic retry, and the settings page offers a manual Retry plus Remove.
+- **Transient failures keep the last-good body**: a provider error, an incomplete discovery, or a not-yet-scoped read keeps injecting the body loaded last time. Only a complete, scoped read that does not advertise the name marks it `unknown`, and only then is it dropped.
 - **Live registry**: injection always reads the skill bodies from `ctx.skills` at load time — nothing is copied into this package, so skill edits are picked up and deleted skills degrade gracefully.
 - **Persistence**: ships `dsh.bundle` (`cordis.patch.yml`) + `dsh.client` (`exports["./client"]`, bundled) so it installs as a real profile plugin that DSH loads on every boot.
 
@@ -102,7 +103,10 @@ The namespace is registered via `ctx.settings.register('skill-injector', schema,
 A: In `each-prompt` mode the section is re-rendered per request, so the next request picks it up. In `start-only` mode the stamp is written once at session start — it applies to sessions started after the change, not the one already open.
 
 **Q: What happens when a skill file is deleted?**
-A: The skill is dropped from injection and listed under "Missing skills" on the settings page; every other selected skill keeps working. Restore the file and the next refresh picks it up again.
+A: The next complete, scoped catalog read marks it `unknown` (`not in the skill catalog`), it stops injecting, and the settings page lists it under **Unresolved** with a **Remove** button — so a stale name can always be cleared. Every other selected skill keeps working. Restore the file and the next refresh picks it up again.
+
+**Q: The settings page says `unavailable` or `no-scope` — is my skill gone?**
+A: No. `unavailable` means provider discovery did not complete, and `no-scope` means no session has established a lookup scope yet (that is normal before the first message of a process). Both are transient: the skill keeps injecting its last-good body and the next refresh clears it. **Retry** re-runs that refresh immediately, and **Remove** only appears once a scoped read has actually run.
 
 **Q: Do subagents follow the injected skills?**
 A: Yes — injection applies to subagents too, by design, with no origin filtering. The chosen voice is consistent across the whole agent tree.
@@ -125,8 +129,8 @@ A: `dsh plugin --profile web rm skill-injector-plugin` (or delete the profile de
 ```
 skill-injector-plugin/
 ├── src/
-│   ├── index.ts            # host half: settings namespace, skill cache, section + session-start injection, routes
-│   ├── helpers.ts          # pure helpers: validateSelection, escapePromptBraces, buildInjectionMessage
+│   ├── index.ts            # host half: settings namespace, resolveSelection (classification + last-good bodies), section + session-start injection, routes
+│   ├── helpers.ts          # pure helpers: validateSelection, escapePromptBraces, buildInjectionMessage, classifySelection, applyBodies
 │   └── client/index.tsx    # client bundle: 5s poller, settings form, dock line
 ├── cordis.patch.yml        # dsh.bundle patch (inserts the plugin row on boot)
 ├── tsdown.config.ts        # builds host (node ESM) + helpers + client (CJS ModuleLoader)
@@ -134,6 +138,7 @@ skill-injector-plugin/
 ├── lib/                    # build output (index.js, helpers.js, client.js)
 ├── tests/
 │   ├── helpers.test.mjs    # node:test unit tests against lib/helpers.js
+│   ├── host.test.mjs       # node:test smoke test driving apply() with a stub ctx
 │   └── fixtures/           # real-shape skill definition sample
 ├── AGENTS.md               # repository guide for AI agents
 ├── llms.txt / llms-full.txt
