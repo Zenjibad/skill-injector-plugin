@@ -76,4 +76,75 @@ export function buildInjectionMessage(name: string, renderedText: string): {
   }
 }
 
+/** How one selected skill name resolved against the current catalog. */
+export type SkillState = 'ready' | 'unknown' | 'unavailable' | 'load-failed' | 'no-scope'
+
+/** One classified selection row. `reason` is set unless the state is `ready`. */
+export interface ClassifiedSkill {
+  name: string
+  state: SkillState
+  reason?: string
+}
+
+/** A catalog observation, or the failure that prevented one. */
+export type CatalogObservation =
+  | { kind: 'scoped'; names: readonly string[]; complete: boolean }
+  | { kind: 'error'; reason: string }
+
+/** Body-load outcome for a name the catalog advertises. */
+export type LoadOutcome = { ok: true } | { ok: false; reason?: string }
+
+/**
+ * Classify every selected name against one catalog observation, in selection
+ * order. An incomplete catalog can never yield `unknown` (the name may simply not
+ * be discovered yet) and neither can an unscoped read (the agent preset's
+ * provider layer is invisible without a scope), so `unknown` always means
+ * "complete discovery, scoped read, genuinely absent".
+ */
+export function classifySelection(input: {
+  selected: readonly string[]
+  catalog: CatalogObservation
+  scoped: boolean
+  loads: ReadonlyMap<string, LoadOutcome>
+}): ClassifiedSkill[] {
+  const { selected, catalog, scoped, loads } = input
+  const advertised = new Set(catalog.kind === 'scoped' ? catalog.names : [])
+  const complete = catalog.kind === 'scoped' && catalog.complete
+  return selected.map((name) => {
+    if (advertised.has(name)) {
+      const load = loads.get(name)
+      if (load !== undefined && load.ok) return { name, state: 'ready' }
+      return {
+        name,
+        state: 'load-failed',
+        reason: load !== undefined && load.reason !== undefined ? load.reason : 'skill body could not be loaded',
+      }
+    }
+    if (catalog.kind === 'error') return { name, state: 'unavailable', reason: catalog.reason }
+    if (!complete) return { name, state: 'unavailable', reason: 'provider discovery incomplete' }
+    if (!scoped) return { name, state: 'no-scope', reason: 'waiting for a session to establish scope' }
+    return { name, state: 'unknown', reason: 'not in the skill catalog' }
+  })
+}
+
+/**
+ * Apply one classification pass to the last-good body map: `ready` replaces a
+ * body, `unknown` and deselected names drop theirs, and transient states keep
+ * whatever was cached before, so a provider hiccup never removes a skill from the
+ * prompt. Generic over the body type to stay free of registry types.
+ */
+export function applyBodies<T>(
+  prev: ReadonlyMap<string, T>,
+  rows: readonly ClassifiedSkill[],
+  fresh: ReadonlyMap<string, T>,
+): Map<string, T> {
+  const next = new Map<string, T>()
+  for (const row of rows) {
+    if (row.state === 'unknown') continue
+    const body = row.state === 'ready' ? fresh.get(row.name) : prev.get(row.name)
+    if (body !== undefined) next.set(row.name, body)
+  }
+  return next
+}
+
 export { MODES }

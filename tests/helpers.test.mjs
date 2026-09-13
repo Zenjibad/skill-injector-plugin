@@ -9,6 +9,8 @@ import {
   validateSelection,
   escapePromptBraces,
   buildInjectionMessage,
+  classifySelection,
+  applyBodies,
 } from '../lib/helpers.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -103,4 +105,130 @@ test('buildInjectionMessage accepts a fixture-derived rendered block', () => {
   const msg = buildInjectionMessage(fixture.name, rendered)
   assert.equal(msg.source.name, 'caveman')
   assert.equal(msg.content[0].text, rendered)
+})
+
+test('classifySelection maps ready, unknown, load-failed in selection order', () => {
+  const rows = classifySelection({
+    selected: ['alpha', 'ghost', 'beta'],
+    catalog: { kind: 'scoped', names: ['alpha', 'beta'], complete: true },
+    scoped: true,
+    loads: new Map([
+      ['alpha', { ok: true }],
+      ['beta', { ok: false, reason: 'EACCES' }],
+    ]),
+  })
+  assert.deepEqual(rows, [
+    { name: 'alpha', state: 'ready' },
+    { name: 'ghost', state: 'unknown', reason: 'not in the skill catalog' },
+    { name: 'beta', state: 'load-failed', reason: 'EACCES' },
+  ])
+})
+
+test('classifySelection gives an advertised name a default load-failed reason', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'scoped', names: ['alpha'], complete: true },
+    scoped: true,
+    loads: new Map([['alpha', { ok: false }]]),
+  })
+  assert.deepEqual(rows, [
+    { name: 'alpha', state: 'load-failed', reason: 'skill body could not be loaded' },
+  ])
+})
+
+test('classifySelection never calls an incomplete catalog unknown', () => {
+  const rows = classifySelection({
+    selected: ['ghost'],
+    catalog: { kind: 'scoped', names: [], complete: false },
+    scoped: true,
+    loads: new Map(),
+  })
+  assert.equal(rows[0].state, 'unavailable')
+  assert.equal(rows[0].reason, 'provider discovery incomplete')
+})
+
+test('classifySelection never calls an unscoped absence unknown', () => {
+  const rows = classifySelection({
+    selected: ['ghost'],
+    catalog: { kind: 'scoped', names: [], complete: true },
+    scoped: false,
+    loads: new Map(),
+  })
+  assert.equal(rows[0].state, 'no-scope')
+  assert.equal(rows[0].reason, 'waiting for a session to establish scope')
+})
+
+test('classifySelection reports a catalog read failure as unavailable', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'error', reason: 'boom' },
+    scoped: true,
+    loads: new Map(),
+  })
+  assert.deepEqual(rows, [{ name: 'alpha', state: 'unavailable', reason: 'boom' }])
+})
+
+test('classifySelection keeps an advertised name resolvable even when discovery is incomplete', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'scoped', names: ['alpha'], complete: false },
+    scoped: true,
+    loads: new Map([['alpha', { ok: true }]]),
+  })
+  assert.deepEqual(rows, [{ name: 'alpha', state: 'ready' }])
+})
+
+test('classifySelection returns one row per selected name', () => {
+  const rows = classifySelection({
+    selected: ['beta', 'alpha', 'gamma'],
+    catalog: { kind: 'scoped', names: ['alpha', 'beta'], complete: true },
+    scoped: true,
+    loads: new Map([
+      ['alpha', { ok: true }],
+      ['beta', { ok: true }],
+    ]),
+  })
+  assert.deepEqual(rows.map((r) => r.name), ['beta', 'alpha', 'gamma'])
+})
+
+test('classifySelection on an empty selection makes no rows', () => {
+  const rows = classifySelection({
+    selected: [],
+    catalog: { kind: 'scoped', names: [], complete: true },
+    scoped: true,
+    loads: new Map(),
+  })
+  assert.deepEqual(rows, [])
+})
+
+test('applyBodies replaces on ready, keeps last-good on transient, drops unknown', () => {
+  const prev = new Map([
+    ['alpha', 'old-alpha'],
+    ['beta', 'old-beta'],
+    ['ghost', 'old-ghost'],
+  ])
+  const fresh = new Map([['alpha', 'new-alpha']])
+  const next = applyBodies(
+    prev,
+    [
+      { name: 'alpha', state: 'ready' },
+      { name: 'beta', state: 'unavailable', reason: 'provider discovery incomplete' },
+      { name: 'ghost', state: 'unknown', reason: 'not in the skill catalog' },
+    ],
+    fresh,
+  )
+  assert.deepEqual([...next], [
+    ['alpha', 'new-alpha'],
+    ['beta', 'old-beta'],
+  ])
+})
+
+test('applyBodies drops deselected names and never invents a body', () => {
+  const prev = new Map([
+    ['alpha', 'old-alpha'],
+    ['gone', 'old-gone'],
+  ])
+  const next = applyBodies(prev, [{ name: 'alpha', state: 'load-failed', reason: 'boom' }], new Map())
+  assert.deepEqual([...next], [['alpha', 'old-alpha']])
+  assert.deepEqual([...applyBodies(new Map(), [{ name: 'x', state: 'no-scope', reason: 'r' }], new Map())], [])
 })
