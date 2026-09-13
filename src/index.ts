@@ -186,6 +186,9 @@ export function apply(ctx: Context): void {
     if (refreshInFlight !== null && refreshInFlight.key === key) return refreshInFlight.promise
     const seq = ++passSeq
     const promise = (async (): Promise<ResolvePass> => {
+      // Snapshot the last-good map this pass starts from: a pass that loses the
+      // seq race must still report `cached` for its own rows.
+      const prevBodies = bodies
       const scoped = options !== undefined
       if (scoped) hasScopedRead = true
 
@@ -229,7 +232,7 @@ export function apply(ctx: Context): void {
       // Compute this pass's body map even when a newer pass already superseded it,
       // so `cached` always describes the rows it is returned with. Only the newest
       // pass may publish it.
-      const nextBodies = applyBodies(bodies, rows, fresh)
+      const nextBodies = applyBodies(prevBodies, rows, fresh)
       if (seq === passSeq) bodies = nextBodies
       return { key, mode: cfg.mode, selected: cfg.selected, rows, cached: new Set(nextBodies.keys()) }
     })().finally(() => {
@@ -322,6 +325,11 @@ export function apply(ctx: Context): void {
       // stamp the remainder. The emit is not awaited, so this lands a task
       // later — before the first prompt assembly in practice, and the same
       // shape dsh-hooks-codex uses for its SessionStart work.
+      // ponytail: a selection change that starts a newer pass before this one
+      // commits leaves `bodies` without it, so this session stamps nothing and
+      // nothing re-runs the stamp. Ceiling: one session without the skill, and
+      // only if the user saves a new selection inside that window. Upgrade path:
+      // call stampSelected again from the `settings/updated` listener.
       void resolveSelection()
         .then(() => stampSelected(agent))
         .catch(() => {

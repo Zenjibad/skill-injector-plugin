@@ -11,6 +11,7 @@
  */
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
+import { cachedSuffix } from '../helpers.ts'
 
 export const inject = ['slots']
 
@@ -146,16 +147,6 @@ export function apply(ctx: Context): void {
     return state
   }
 
-  /** What a cached body means depends on the mode: `each-prompt` re-renders the
-   *  section every request, `start-only` only injects at session start. */
-  function cachedSuffix(snap: Snapshot, u: ClassifiedSkill): string {
-    if (u.cached !== true) return ''
-    if (snap.mode === 'start-only') {
-      return snap.injected.includes(u.name) ? ' · already in this session' : ' · last loaded copy retained'
-    }
-    return ' · still injecting the last loaded copy'
-  }
-
   function SettingsPanel(): React.ReactElement | null {
     const snap = useSnapshot()
     const h = React.createElement
@@ -259,7 +250,12 @@ export function apply(ctx: Context): void {
                   'li',
                   { key: u.name, className: 'si-urow' },
                   h('span', { className: 'si-item-name' }, u.name),
-                  h('span', { className: 'si-status' }, (u.reason || u.state) + cachedSuffix(snap, u)),
+                  h(
+                    'span',
+                    { className: 'si-status' },
+                    (u.reason || u.state) +
+                      cachedSuffix({ mode: snap.mode, injected: snap.injected, name: u.name, cached: u.cached }),
+                  ),
                   h(
                     'button',
                     {

@@ -150,4 +150,23 @@ export function applyBodies<T>(
   return next
 }
 
+/**
+ * What a held body means for the prompt depends on the mode: `each-prompt`
+ * re-renders the section every request, while `start-only` only injects at
+ * session start. Returns the trailing hint for one unresolved row, or '' when
+ * the row has no last-good body to talk about.
+ */
+export function cachedSuffix(input: {
+  mode: InjectMode
+  injected: readonly string[]
+  name: string
+  cached: boolean | undefined
+}): string {
+  if (input.cached !== true) return ''
+  if (input.mode === 'start-only') {
+    return input.injected.includes(input.name) ? ' · already in this session' : ' · last loaded copy retained'
+  }
+  return ' · still injecting the last loaded copy'
+}
+
 export { MODES }

@@ -28,7 +28,7 @@
 | Feature | Description |
 | --- | --- |
 | ⚙️ **Settings page** | Settings → Skill Injector: checkbox list of available skills, injection-mode radio, save; unresolved skills are listed with the reason and a Retry button (plus Remove once a session has established scope) |
-| 🪧 **Composer indicator** | One line under the chat input: `Skills: caveman, ponytail · every prompt`, refreshed every 5s |
+| 🪧 **Composer indicator** | One line under the chat input: `Injected Skills: caveman, ponytail · Mode: each-prompt`, refreshed every 5s (with a ` · N unresolved` suffix while skills are unresolved) |
 | 🔁 **Two injection modes** | `each-prompt` (system-prompt section, re-rendered every request) vs `start-only` (one durable skill-invocation message stamped at session start) |
 | 📚 **Live skill registry** | Reads skill bodies from `ctx.skills` at load time; no copied files; each selected skill is classified (`ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`) and a transient failure keeps injecting the last-good body |
 | 🧩 **Subagents included** | Injection applies to subagents too (consistent voice; no filtering) |
@@ -84,7 +84,7 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 ### Requirements
 
 - Skills exist in `~/.agents/skills` (or another configured skill root the `ctx.skills` registry reads).
-- No skill selected → nothing is injected; the dock line shows `Skills: none` and the settings page still works.
+- No skill selected → nothing is injected; the dock line reads `Injected Skills: none · Mode: each-prompt` and the settings page still works.
 
 ## ⚙️ Configuration
 
@@ -105,8 +105,8 @@ A: In `each-prompt` mode the section is re-rendered per request, so the next req
 **Q: What happens when a skill file is deleted?**
 A: The next complete, scoped catalog read marks it `unknown` (`not in the skill catalog`), it stops injecting, and the settings page lists it under **Unresolved** with a **Remove** button — so a stale name can always be cleared. Every other selected skill keeps working. Restore the file and the next refresh picks it up again.
 
-**Q: The settings page says `unavailable` or `no-scope` — is my skill gone?**
-A: No. `unavailable` means provider discovery did not complete, and `no-scope` means no session has established a lookup scope yet (that is normal before the first message of a process). Both are transient: the skill keeps injecting its last-good body and the next refresh clears it. **Retry** re-runs that refresh immediately, and **Remove** only appears once a scoped read has actually run.
+**Q: The settings page says "provider discovery incomplete" or "waiting for a session to establish scope" — is my skill gone?**
+A: No. The first means provider discovery did not complete, and the second means no session has established a lookup scope yet (that is normal before the first message of a process). Both are transient: the skill keeps injecting its last-good body and the next refresh clears it. **Retry** re-runs that refresh immediately, and **Remove** only appears once a scoped read has actually run.
 
 **Q: Do subagents follow the injected skills?**
 A: Yes — injection applies to subagents too, by design, with no origin filtering. The chosen voice is consistent across the whole agent tree.

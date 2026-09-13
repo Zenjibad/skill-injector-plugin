@@ -11,6 +11,7 @@ import {
   buildInjectionMessage,
   classifySelection,
   applyBodies,
+  cachedSuffix,
 } from '../lib/helpers.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -291,4 +292,21 @@ test('classifySelection never reports an empty catalog-error reason', () => {
   assert.deepEqual(rows, [
     { name: 'alpha', state: 'unavailable', reason: 'skill catalog read failed' },
   ])
+})
+
+test('cachedSuffix describes a held body differently per mode', () => {
+  assert.equal(
+    cachedSuffix({ mode: 'each-prompt', injected: [], name: 'ponytail', cached: true }),
+    ' · still injecting the last loaded copy',
+  )
+  assert.equal(
+    cachedSuffix({ mode: 'start-only', injected: ['ponytail'], name: 'ponytail', cached: true }),
+    ' · already in this session',
+  )
+  assert.equal(
+    cachedSuffix({ mode: 'start-only', injected: [], name: 'ponytail', cached: true }),
+    ' · last loaded copy retained',
+  )
+  assert.equal(cachedSuffix({ mode: 'each-prompt', injected: [], name: 'ponytail', cached: false }), '')
+  assert.equal(cachedSuffix({ mode: 'each-prompt', injected: [], name: 'ponytail', cached: undefined }), '')
 })
