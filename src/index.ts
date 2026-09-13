@@ -19,10 +19,15 @@ import z from '@deepseek-ai/schemastery'
 import { isModelInvocable, renderSkillContent, type SkillResourceBase, type SkillSummary } from '@deepseek-ai/dsh-skill'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
+  applyBodies,
   buildInjectionMessage,
+  classifySelection,
   escapePromptBraces,
   validateSelection,
+  type CatalogObservation,
+  type ClassifiedSkill,
   type InjectorConfig,
+  type LoadOutcome,
 } from './helpers.js'
 
 export const name = 'skill-injector-plugin'
@@ -43,14 +48,28 @@ interface SkillDef {
   resourceBase?: SkillResourceBase
 }
 
+/** The subset of a live agent this plugin reads (see `agent/session-start`). */
+interface SessionAgent {
+  id?: string
+  session?: {
+    header?: { cwd?: string }
+    events?: Array<{ type?: string; data?: any }>
+  }
+  inject?: (message: unknown) => void
+}
+
 interface Snapshot {
   ok: boolean
   error?: string
   mode: InjectorConfig['mode']
   selected: string[]
   available: Array<{ name: string; description: string }>
+  unresolved: ClassifiedSkill[]
+  /** Derived from `unresolved`; see buildSnapshot for why it still exists. */
   missing: string[]
   injected: string[]
+  /** True once a scoped resolve has run, so the UI never offers Remove off the boot race. */
+  canRemove: boolean
 }
 
 type HostCtx = {
@@ -74,6 +93,8 @@ type HostCtx = {
   }
   skills: {
     list(options?: Record<string, unknown>): Promise<SkillSummary[]>
+    /** Catalog + discovery completeness: `complete: false` means "retry later", never "deleted". */
+    snapshot(options?: Record<string, unknown>): Promise<{ skills: SkillSummary[]; complete: boolean }>
     get(name: string, options?: Record<string, unknown>): Promise<SkillDef | undefined>
   }
   systemPrompt: {
@@ -110,43 +131,78 @@ export function apply(ctx: Context): void {
       : { scope: currentAgent.scope }
   }
 
-  /** name -> loaded skill body for the current selection. */
-  const cache = new Map<string, SkillDef>()
+  /** name -> last-good skill body. Replaced only on `ready`; see applyBodies. */
+  let bodies = new Map<string, SkillDef>()
+  /** Classification from the most recent pass, for the snapshot. */
+  let lastClassification: ClassifiedSkill[] = []
+  /** True once a pass ran with an agent scope; gates the UI's Remove action. */
+  let hasScopedRead = false
   /** agentId -> skill names stamped in start-only mode. */
   const injectedByAgent = new Map<string, string[]>()
   let currentAgentId: string | null = null
   /** Live agent handle (used as the skills lookup scope) + its workspace cwd. */
   let currentAgent: { scope: unknown; cwd?: string } | null = null
-  /** In-flight refresh promise so concurrent refreshCache calls share one pass. */
-  let refreshInFlight: Promise<string[]> | null = null
+  /** In-flight resolve so concurrent triggers share one pass. */
+  let refreshInFlight: Promise<ClassifiedSkill[]> | null = null
 
-  function refreshCache(): Promise<string[]> {
+  /** Message text of an unknown throw, for a user-facing reason string. */
+  function errorText(e: unknown): string {
+    return String((e as Error)?.message ?? e)
+  }
+
+  /**
+   * One classification pass over the current selection. Reads the catalog once
+   * (with its completeness flag), loads bodies only for advertised names, then
+   * applies the result to the last-good body map.
+   */
+  function resolveSelection(): Promise<ClassifiedSkill[]> {
     if (refreshInFlight !== null) return refreshInFlight
-    refreshInFlight = (async (): Promise<string[]> => {
-      const missing: string[] = []
+    refreshInFlight = (async (): Promise<ClassifiedSkill[]> => {
       const selected = config().selected
-      const next = new Map<string, SkillDef>()
+      const options = lookupOptions()
+      const scoped = options !== undefined
+      if (scoped) hasScopedRead = true
+
+      let catalog: CatalogObservation
+      try {
+        const observation = await skills.snapshot(options)
+        catalog = {
+          kind: 'scoped',
+          names: observation.skills.map((s) => s.name),
+          complete: observation.complete,
+        }
+      } catch (e) {
+        catalog = { kind: 'error', reason: errorText(e) }
+      }
+
+      const advertised = new Set(catalog.kind === 'scoped' ? catalog.names : [])
+      const loads = new Map<string, LoadOutcome>()
+      const fresh = new Map<string, SkillDef>()
       for (const name of selected) {
+        if (!advertised.has(name)) continue
         try {
-          const skill = await skills.get(name, lookupOptions())
+          const skill = await skills.get(name, options)
           if (skill === undefined || typeof skill.content !== 'string') {
-            missing.push(name)
+            loads.set(name, { ok: false, reason: 'skill body could not be loaded' })
             continue
           }
-          next.set(name, {
+          fresh.set(name, {
             name: skill.name,
             description: skill.description,
             content: skill.content,
             provider: skill.provider,
             ...(skill.resourceBase !== undefined ? { resourceBase: skill.resourceBase } : {}),
           })
-        } catch {
-          missing.push(name)
+          loads.set(name, { ok: true })
+        } catch (e) {
+          loads.set(name, { ok: false, reason: errorText(e) })
         }
       }
-      cache.clear()
-      for (const [key, value] of next) cache.set(key, value)
-      return missing
+
+      const rows = classifySelection({ selected, catalog, scoped, loads })
+      bodies = applyBodies(bodies, rows, fresh)
+      lastClassification = rows
+      return rows
     })().finally(() => {
       refreshInFlight = null
     })
@@ -157,7 +213,9 @@ export function apply(ctx: Context): void {
   function renderActiveSkills(): string {
     const blocks: string[] = []
     for (const name of config().selected) {
-      const skill = cache.get(name)
+      // Renders any name that has a body, whatever its state: transient failures
+      // keep their last-good body and `unknown` is the only state without one.
+      const skill = bodies.get(name)
       if (skill === undefined) continue
       // Section text goes through strict {{variable}} interpolation; escape
       // {{ so unknown refs in skill bodies never throw (messages are not
@@ -168,7 +226,7 @@ export function apply(ctx: Context): void {
   }
 
   /** True when the session log already carries a stamped skill-invocation for `name`. */
-  function alreadyInHistory(agent: { session?: { events?: Array<{ type?: string; data?: any }> } }, name: string): boolean {
+  function alreadyInHistory(agent: SessionAgent, name: string): boolean {
     try {
       const events = agent.session?.events
       if (!Array.isArray(events)) return false
@@ -192,39 +250,57 @@ export function apply(ctx: Context): void {
     }),
   )
 
-  // start-only: stamp one durable user/message per selected skill at session
-  // start, deduped against this process's stamps and the session history.
+  /**
+   * Stamp the selected skills this session has not stamped yet. Idempotent:
+   * `injectedByAgent` and `alreadyInHistory` make a second call after a later
+   * resolve a no-op, which is what lets a cold cache stamp in two passes.
+   */
+  function stampSelected(agent: SessionAgent): void {
+    const id = agent.id
+    if (id === undefined || agent.inject === undefined) return
+    if (config().mode !== 'start-only') return
+    const stamped = new Set(injectedByAgent.get(id) ?? [])
+    for (const name of config().selected) {
+      if (stamped.has(name)) continue
+      const skill = bodies.get(name)
+      if (skill === undefined) continue
+      if (alreadyInHistory(agent, name)) {
+        stamped.add(name)
+        continue
+      }
+      try {
+        agent.inject(createUserMessage(buildInjectionMessage(name, renderSkillContent(skill))))
+        stamped.add(name)
+      } catch {
+        // contained: never let one bad stamp break the session start
+      }
+    }
+    injectedByAgent.set(id, [...stamped])
+    if (injectedByAgent.size > 200) injectedByAgent.delete(injectedByAgent.keys().next().value as string)
+  }
+
+  // start-only: stamp once per selected skill, deduped against this process's
+  // stamps and the session history.
   ctx.effect(() =>
-    c.on('agent/session-start', ({ agent }: { agent?: { id?: string; session?: unknown; inject?: (m: unknown) => void } }) => {
+    c.on('agent/session-start', ({ agent }: { agent?: SessionAgent }) => {
       if (agent?.id === undefined || agent.inject === undefined) return
       currentAgentId = agent.id
-      currentAgent = {
-        scope: agent,
-        cwd: (agent as { session?: { header?: { cwd?: string } } }).session?.header?.cwd,
-      }
-      void refreshCache()
-      if (config().mode !== 'start-only') return
-      const stamped = new Set(injectedByAgent.get(agent.id) ?? [])
-      for (const name of config().selected) {
-        const skill = cache.get(name)
-        if (skill === undefined || stamped.has(name)) continue
-        if (alreadyInHistory(agent as { session?: { events?: Array<{ type?: string; data?: any }> } }, name)) {
-          stamped.add(name)
-          continue
-        }
-        try {
-          agent.inject(createUserMessage(buildInjectionMessage(name, renderSkillContent(skill))))
-          stamped.add(name)
-        } catch {
-          // contained: never let one bad stamp break the session start
-        }
-      }
-      injectedByAgent.set(agent.id, [...stamped])
-      if (injectedByAgent.size > 200) injectedByAgent.delete(injectedByAgent.keys().next().value as string)
+      currentAgent = { scope: agent, cwd: agent.session?.header?.cwd }
+      // Pass 1: whatever the cache already holds, synchronously (warm path).
+      stampSelected(agent)
+      // Pass 2: a fresh process has a cold cache, so resolve scoped first and
+      // stamp the remainder. The emit is not awaited, so this lands a task
+      // later — before the first prompt assembly in practice, and the same
+      // shape dsh-hooks-codex uses for its SessionStart work.
+      void resolveSelection()
+        .then(() => stampSelected(agent))
+        .catch(() => {
+          // defensive: each await inside the pass is already contained
+        })
     }),
   )
 
-  async function buildSnapshot(missing: string[]): Promise<Snapshot> {
+  async function buildSnapshot(): Promise<Snapshot> {
     const cfg = config()
     let available: Array<{ name: string; description: string }> = []
     try {
@@ -234,13 +310,18 @@ export function apply(ctx: Context): void {
     } catch {
       available = []
     }
+    const unresolved = lastClassification.filter((r) => r.state !== 'ready')
     return {
       ok: true,
       mode: cfg.mode,
       selected: cfg.selected,
       available,
-      missing,
+      unresolved,
+      // ponytail: derived flat list kept one release so a stale client bundle
+      // renders names instead of "[object Object]"; delete once the client shape settles.
+      missing: unresolved.map((u) => u.name),
       injected: currentAgentId !== null ? (injectedByAgent.get(currentAgentId) ?? []) : [],
+      canRemove: hasScopedRead,
     }
   }
 
@@ -251,10 +332,10 @@ export function apply(ctx: Context): void {
     // changes on disk (the filesystem provider invalidates the registry).
     disposers.push(
       c.on('settings/updated', (ns: string) => {
-        if (ns === NAMESPACE) void refreshCache()
+        if (ns === NAMESPACE) void resolveSelection()
       }),
     )
-    disposers.push(c.on('skills/change', () => void refreshCache()))
+    disposers.push(c.on('skills/change', () => void resolveSelection()))
 
     disposers.push(
       webServer.register({
@@ -262,8 +343,8 @@ export function apply(ctx: Context): void {
         path: '/skill-injector/api',
         handler: async (_req, res) => {
           try {
-            const missing = await refreshCache()
-            const body = JSON.stringify(await buildSnapshot(missing))
+            await resolveSelection()
+            const body = JSON.stringify(await buildSnapshot())
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
             res.end(body)
           } catch (e) {
@@ -300,9 +381,9 @@ export function apply(ctx: Context): void {
               return
             }
             await settings.update(NAMESPACE, r.config)
-            const missing = await refreshCache()
+            await resolveSelection()
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-            res.end(JSON.stringify(await buildSnapshot(missing)))
+            res.end(JSON.stringify(await buildSnapshot()))
           } catch (e) {
             res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
             res.end(JSON.stringify({ ok: false, error: String((e as Error)?.message ?? e) }))
@@ -311,7 +392,7 @@ export function apply(ctx: Context): void {
       }),
     )
 
-    void refreshCache()
+    void resolveSelection()
 
     return () => {
       for (const d of disposers) {
