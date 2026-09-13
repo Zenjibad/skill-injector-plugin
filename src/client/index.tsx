@@ -29,7 +29,8 @@ interface ClassifiedSkill {
   name: string
   state: string
   reason?: string
-  cached: boolean
+  /** Omitted by a host that predates this field. */
+  cached?: boolean
 }
 
 interface Snapshot {
@@ -62,7 +63,7 @@ export function apply(ctx: Context): void {
     '.si-dash{display:flex;flex-direction:column;gap:14px;padding:8px 0;color:var(--dsw-alias-label-primary)}',
     '.si-title{font-size:16px;font-weight:600}',
     '.si-sub{font-size:12px;opacity:.55}',
-    '.si-list{display:flex;flex-direction:column;gap:4px}',
+    '.si-list{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}',
     '.si-item{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1)}',
     '.si-item input{margin-top:2px}',
     '.si-item-name{font-size:13px;font-weight:600}',
@@ -73,8 +74,9 @@ export function apply(ctx: Context): void {
     '.si-status{font-size:12px;opacity:.7}',
     '.si-error{color:var(--dsw-alias-state-error-primary);font-size:12px}',
     '.si-urow{display:flex;align-items:center;gap:8px;font-size:12px}',
-    '.si-urow>.si-status{flex:1}',
+    '.si-urow>.si-status{flex:1;min-width:0;overflow-wrap:anywhere}',
     '.si-mini{padding:2px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);cursor:pointer;font-size:12px}',
+    '.si-mini:disabled{opacity:.5;cursor:default}',
     '.si-note{padding:16px;opacity:.7}',
     '.si-dock{font-size:12px;opacity:.65;padding:2px 0;white-space:nowrap}',
   ].join('')
@@ -84,16 +86,45 @@ export function apply(ctx: Context): void {
   })
 
   let snapshot: Snapshot | null = null
+  /** Monotonic request id: a slow response must never overwrite a newer one. */
+  let pollSeq = 0
   const listeners = new Set<() => void>()
 
+  /** Normalize a host body: this bundle can outlive the host that served it. */
+  function normalize(raw: Partial<Snapshot>): Snapshot {
+    return {
+      ok: raw.ok === true,
+      error: raw.error,
+      mode: raw.mode === 'start-only' ? 'start-only' : 'each-prompt',
+      selected: raw.selected ?? [],
+      available: raw.available ?? [],
+      unresolved: raw.unresolved ?? [],
+      injected: raw.injected ?? [],
+      canRemove: raw.canRemove === true,
+    }
+  }
+
   async function poll(): Promise<void> {
+    const seq = ++pollSeq
+    let next: Snapshot
     try {
       const res = await fetch(API, { cache: 'no-store' })
       if (!res.ok) throw new Error('HTTP ' + res.status)
-      snapshot = (await res.json()) as Snapshot
+      next = normalize((await res.json()) as Partial<Snapshot>)
     } catch (e) {
-      snapshot = { ok: false, error: String((e as Error)?.message ?? e), mode: 'each-prompt', selected: [], available: [], unresolved: [], injected: [], canRemove: false }
+      next = {
+        ok: false,
+        error: String((e as Error)?.message ?? e),
+        mode: 'each-prompt',
+        selected: [],
+        available: [],
+        unresolved: [],
+        injected: [],
+        canRemove: false,
+      }
     }
+    if (seq !== pollSeq) return // superseded by a newer request
+    snapshot = next
     for (const fn of listeners) fn()
   }
   void poll()
@@ -113,6 +144,16 @@ export function apply(ctx: Context): void {
       }
     }, [])
     return state
+  }
+
+  /** What a cached body means depends on the mode: `each-prompt` re-renders the
+   *  section every request, `start-only` only injects at session start. */
+  function cachedSuffix(snap: Snapshot, u: ClassifiedSkill): string {
+    if (u.cached !== true) return ''
+    if (snap.mode === 'start-only') {
+      return snap.injected.includes(u.name) ? ' · already in this session' : ' · last loaded copy retained'
+    }
+    return ' · still injecting the last loaded copy'
   }
 
   function SettingsPanel(): React.ReactElement | null {
@@ -210,24 +251,38 @@ export function apply(ctx: Context): void {
             'div',
             { className: 'si-list' },
             h('div', { className: 'si-sub' }, 'Unresolved (' + snap.unresolved.length + '):'),
-            snap.unresolved.map((u) =>
-              h(
-                'div',
-                { key: u.name, className: 'si-urow' },
-                h('span', { className: 'si-item-name' }, u.name),
+            h(
+              'ul',
+              { className: 'si-list' },
+              snap.unresolved.map((u) =>
                 h(
-                  'span',
-                  { className: 'si-status' },
-                  (u.reason ?? u.state) + (u.cached ? ' · still injecting the last loaded copy' : ''),
+                  'li',
+                  { key: u.name, className: 'si-urow' },
+                  h('span', { className: 'si-item-name' }, u.name),
+                  h('span', { className: 'si-status' }, (u.reason || u.state) + cachedSuffix(snap, u)),
+                  h(
+                    'button',
+                    {
+                      className: 'si-mini',
+                      'aria-label': 'Retry ' + u.name,
+                      onClick: () => void retry(),
+                      disabled: checking,
+                    },
+                    checking ? 'Checking…' : 'Retry',
+                  ),
+                  snap.canRemove
+                    ? h(
+                        'button',
+                        {
+                          className: 'si-mini',
+                          'aria-label': 'Remove ' + u.name,
+                          onClick: () => void remove(u.name),
+                          disabled: saving,
+                        },
+                        'Remove',
+                      )
+                    : null,
                 ),
-                h(
-                  'button',
-                  { className: 'si-mini', onClick: () => void retry(), disabled: checking },
-                  checking ? 'Checking…' : 'Retry',
-                ),
-                snap.canRemove
-                  ? h('button', { className: 'si-mini', onClick: () => void remove(u.name), disabled: saving }, 'Remove')
-                  : null,
               ),
             ),
           )

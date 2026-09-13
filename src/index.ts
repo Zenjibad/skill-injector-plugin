@@ -78,6 +78,8 @@ interface ResolvePass {
   mode: InjectorConfig['mode']
   selected: string[]
   rows: ClassifiedSkill[]
+  /** Names holding a last-good body after this pass, so `cached` describes this pass. */
+  cached: ReadonlySet<string>
 }
 
 /** An unresolved row as the UI sees it: the classification, plus whether a
@@ -224,8 +226,12 @@ export function apply(ctx: Context): void {
       }
 
       const rows = classifySelection({ selected: cfg.selected, catalog, scoped, loads })
-      if (seq === passSeq) bodies = applyBodies(bodies, rows, fresh)
-      return { key, mode: cfg.mode, selected: cfg.selected, rows }
+      // Compute this pass's body map even when a newer pass already superseded it,
+      // so `cached` always describes the rows it is returned with. Only the newest
+      // pass may publish it.
+      const nextBodies = applyBodies(bodies, rows, fresh)
+      if (seq === passSeq) bodies = nextBodies
+      return { key, mode: cfg.mode, selected: cfg.selected, rows, cached: new Set(nextBodies.keys()) }
     })().finally(() => {
       if (refreshInFlight !== null && refreshInFlight.promise === promise) refreshInFlight = null
     })
@@ -333,12 +339,12 @@ export function apply(ctx: Context): void {
     } catch {
       available = []
     }
-    // `cached` reports whether the last-good body map still holds a copy for this
-    // name: a transient failure keeps injecting it, so a row is not necessarily
-    // "not injecting" — `unknown` (and a first-ever failure) is.
+    // `cached` reports whether a last-good body is still held for this name: a
+    // transient failure keeps injecting it, so a row is not necessarily "not
+    // injecting" — `unknown` (and a first-ever failure) is.
     const unresolved: UnresolvedSkill[] = pass.rows
       .filter((r) => r.state !== 'ready')
-      .map((r) => ({ ...r, cached: bodies.has(r.name) }))
+      .map((r) => ({ ...r, cached: pass.cached.has(r.name) }))
     return {
       ok: true,
       mode: pass.mode,
