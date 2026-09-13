@@ -280,3 +280,15 @@ test('applyBodies drops a ready row that has no fresh body', () => {
   const next = applyBodies(new Map([['a', 'OLD']]), [{ name: 'a', state: 'ready' }], new Map())
   assert.deepEqual([...next], [])
 })
+
+test('classifySelection never reports an empty catalog-error reason', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'error', reason: '' },
+    scoped: true,
+    loads: new Map(),
+  })
+  assert.deepEqual(rows, [
+    { name: 'alpha', state: 'unavailable', reason: 'skill catalog read failed' },
+  ])
+})

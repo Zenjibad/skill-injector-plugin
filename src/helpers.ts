@@ -121,7 +121,9 @@ export function classifySelection(input: {
         reason: load?.reason || 'skill body could not be loaded',
       }
     }
-    if (catalog.kind === 'error') return { name, state: 'unavailable', reason: catalog.reason }
+    if (catalog.kind === 'error') {
+      return { name, state: 'unavailable', reason: catalog.reason || 'skill catalog read failed' }
+    }
     if (!complete) return { name, state: 'unavailable', reason: 'provider discovery incomplete' }
     if (!scoped) return { name, state: 'no-scope', reason: 'waiting for a session to establish scope' }
     return { name, state: 'unknown', reason: 'not in the skill catalog' }

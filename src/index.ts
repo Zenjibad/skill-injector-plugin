@@ -72,6 +72,14 @@ interface Snapshot {
   canRemove: boolean
 }
 
+/** One classification pass: the inputs it was computed from, plus its rows. */
+interface ResolvePass {
+  key: string
+  mode: InjectorConfig['mode']
+  selected: string[]
+  rows: ClassifiedSkill[]
+}
+
 type HostCtx = {
   webServer: {
     register(route: {
@@ -133,8 +141,6 @@ export function apply(ctx: Context): void {
 
   /** name -> last-good skill body. Replaced only on `ready`; see applyBodies. */
   let bodies = new Map<string, SkillDef>()
-  /** Classification from the most recent pass, for the snapshot. */
-  let lastClassification: ClassifiedSkill[] = []
   /** True once a pass ran with an agent scope; gates the UI's Remove action. */
   let hasScopedRead = false
   /** agentId -> skill names stamped in start-only mode. */
@@ -142,8 +148,13 @@ export function apply(ctx: Context): void {
   let currentAgentId: string | null = null
   /** Live agent handle (used as the skills lookup scope) + its workspace cwd. */
   let currentAgent: { scope: unknown; cwd?: string } | null = null
-  /** In-flight resolve so concurrent triggers share one pass. */
-  let refreshInFlight: Promise<ClassifiedSkill[]> | null = null
+  /**
+   * In-flight resolve plus the selection/scope key it was computed from, so
+   * concurrent triggers share a pass only when they agree on both.
+   */
+  let refreshInFlight: { key: string; promise: Promise<ResolvePass> } | null = null
+  /** Monotonic pass id: a slower older pass must never commit over a newer one. */
+  let passSeq = 0
 
   /** Message text of an unknown throw, for a user-facing reason string. */
   function errorText(e: unknown): string {
@@ -154,12 +165,19 @@ export function apply(ctx: Context): void {
    * One classification pass over the current selection. Reads the catalog once
    * (with its completeness flag), loads bodies only for advertised names, then
    * applies the result to the last-good body map.
+   *
+   * A pass is shared only with a trigger that agrees on the selection and the
+   * scope: a save or a newly arrived scope must not inherit rows computed from
+   * the previous ones. Only the newest pass may commit bodies, so a pass that
+   * settles late cannot speak for a selection it no longer describes.
    */
-  function resolveSelection(): Promise<ClassifiedSkill[]> {
-    if (refreshInFlight !== null) return refreshInFlight
-    refreshInFlight = (async (): Promise<ClassifiedSkill[]> => {
-      const selected = config().selected
-      const options = lookupOptions()
+  function resolveSelection(): Promise<ResolvePass> {
+    const cfg = config()
+    const options = lookupOptions()
+    const key = (options !== undefined ? 'scoped:' : 'unscoped:') + cfg.selected.join(',')
+    if (refreshInFlight !== null && refreshInFlight.key === key) return refreshInFlight.promise
+    const seq = ++passSeq
+    const promise = (async (): Promise<ResolvePass> => {
       const scoped = options !== undefined
       if (scoped) hasScopedRead = true
 
@@ -178,7 +196,7 @@ export function apply(ctx: Context): void {
       const advertised = new Set(catalog.kind === 'scoped' ? catalog.names : [])
       const loads = new Map<string, LoadOutcome>()
       const fresh = new Map<string, SkillDef>()
-      for (const name of selected) {
+      for (const name of cfg.selected) {
         if (!advertised.has(name)) continue
         try {
           const skill = await skills.get(name, options)
@@ -199,14 +217,14 @@ export function apply(ctx: Context): void {
         }
       }
 
-      const rows = classifySelection({ selected, catalog, scoped, loads })
-      bodies = applyBodies(bodies, rows, fresh)
-      lastClassification = rows
-      return rows
+      const rows = classifySelection({ selected: cfg.selected, catalog, scoped, loads })
+      if (seq === passSeq) bodies = applyBodies(bodies, rows, fresh)
+      return { key, mode: cfg.mode, selected: cfg.selected, rows }
     })().finally(() => {
-      refreshInFlight = null
+      if (refreshInFlight !== null && refreshInFlight.promise === promise) refreshInFlight = null
     })
-    return refreshInFlight
+    refreshInFlight = { key, promise }
+    return promise
   }
 
   /** Concatenated <skill_content> blocks for the selection (each-prompt path). */
@@ -300,8 +318,7 @@ export function apply(ctx: Context): void {
     }),
   )
 
-  async function buildSnapshot(): Promise<Snapshot> {
-    const cfg = config()
+  async function buildSnapshot(pass: ResolvePass): Promise<Snapshot> {
     let available: Array<{ name: string; description: string }> = []
     try {
       available = (await skills.list(lookupOptions()))
@@ -310,11 +327,11 @@ export function apply(ctx: Context): void {
     } catch {
       available = []
     }
-    const unresolved = lastClassification.filter((r) => r.state !== 'ready')
+    const unresolved = pass.rows.filter((r) => r.state !== 'ready')
     return {
       ok: true,
-      mode: cfg.mode,
-      selected: cfg.selected,
+      mode: pass.mode,
+      selected: pass.selected,
       available,
       unresolved,
       // ponytail: derived flat list kept one release so a stale client bundle
@@ -343,8 +360,8 @@ export function apply(ctx: Context): void {
         path: '/skill-injector/api',
         handler: async (_req, res) => {
           try {
-            await resolveSelection()
-            const body = JSON.stringify(await buildSnapshot())
+            const pass = await resolveSelection()
+            const body = JSON.stringify(await buildSnapshot(pass))
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
             res.end(body)
           } catch (e) {
@@ -381,9 +398,9 @@ export function apply(ctx: Context): void {
               return
             }
             await settings.update(NAMESPACE, r.config)
-            await resolveSelection()
+            const pass = await resolveSelection()
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-            res.end(JSON.stringify(await buildSnapshot()))
+            res.end(JSON.stringify(await buildSnapshot(pass)))
           } catch (e) {
             res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
             res.end(JSON.stringify({ ok: false, error: String((e as Error)?.message ?? e) }))
