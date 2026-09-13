@@ -122,8 +122,8 @@ test('host classifies, gates Remove on scope, and stamps a cold cache', async ()
   assert.equal(boot.canRemove, false)
   assert.deepEqual(boot.available, [])
   assert.deepEqual(boot.unresolved, [
-    { name: 'ponytail', state: 'no-scope', reason: 'waiting for a session to establish scope' },
-    { name: 'llmtrim', state: 'no-scope', reason: 'waiting for a session to establish scope' },
+    { name: 'ponytail', state: 'no-scope', reason: 'waiting for a session to establish scope', cached: false },
+    { name: 'llmtrim', state: 'no-scope', reason: 'waiting for a session to establish scope', cached: false },
   ])
 
   // A session starts with a cold cache: pass 1 stamps nothing, pass 2 must stamp.
@@ -138,7 +138,7 @@ test('host classifies, gates Remove on scope, and stamps a cold cache', async ()
   // HIDDEN is advertised but filtered out here because it is not model-invocable.
   assert.deepEqual(after.available, [{ name: 'ponytail', description: 'lazy senior dev' }])
   assert.deepEqual(after.unresolved, [
-    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
+    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog', cached: false },
   ])
   assert.deepEqual(after.missing, ['llmtrim'])
   assert.deepEqual(after.injected, ['ponytail'])
@@ -201,8 +201,8 @@ test('a transient failure keeps injecting the last-good body; only unknown drops
   getThrows = true
   const failed = await snapshot(h.routes)
   assert.deepEqual(failed.unresolved, [
-    { name: 'ponytail', state: 'load-failed', reason: 'EACCES' },
-    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
+    { name: 'ponytail', state: 'load-failed', reason: 'EACCES', cached: true },
+    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog', cached: false },
   ])
   assert.match(section(), /BODY-PONYTAIL/)
 
@@ -269,7 +269,7 @@ test('a newly established scope does not inherit an in-flight unscoped pass', { 
   // existed this snapshot joined the parked pass and reported both as no-scope.
   assert.equal(scopedSnap.canRemove, true)
   assert.deepEqual(scopedSnap.unresolved, [
-    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
+    { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog', cached: false },
   ])
   // Exactly two reads: the boot read plus the scope change's own read. A pass
   // that joined the parked unscoped one instead would make this one.

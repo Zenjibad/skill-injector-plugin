@@ -64,7 +64,7 @@ interface Snapshot {
   mode: InjectorConfig['mode']
   selected: string[]
   available: Array<{ name: string; description: string }>
-  unresolved: ClassifiedSkill[]
+  unresolved: UnresolvedSkill[]
   /** Derived from `unresolved`; see buildSnapshot for why it still exists. */
   missing: string[]
   injected: string[]
@@ -78,6 +78,12 @@ interface ResolvePass {
   mode: InjectorConfig['mode']
   selected: string[]
   rows: ClassifiedSkill[]
+}
+
+/** An unresolved row as the UI sees it: the classification, plus whether a
+ *  last-good body is still being injected in its place. */
+interface UnresolvedSkill extends ClassifiedSkill {
+  cached: boolean
 }
 
 type HostCtx = {
@@ -327,7 +333,12 @@ export function apply(ctx: Context): void {
     } catch {
       available = []
     }
-    const unresolved = pass.rows.filter((r) => r.state !== 'ready')
+    // `cached` reports whether the last-good body map still holds a copy for this
+    // name: a transient failure keeps injecting it, so a row is not necessarily
+    // "not injecting" — `unknown` (and a first-ever failure) is.
+    const unresolved: UnresolvedSkill[] = pass.rows
+      .filter((r) => r.state !== 'ready')
+      .map((r) => ({ ...r, cached: bodies.has(r.name) }))
     return {
       ok: true,
       mode: pass.mode,

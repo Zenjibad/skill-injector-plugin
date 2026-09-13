@@ -23,14 +23,25 @@ interface AvailableSkill {
   description: string
 }
 
+/** One selected skill the host could not inject, with its reason. `cached` means
+ *  the last successfully loaded body is still being injected in its place. */
+interface ClassifiedSkill {
+  name: string
+  state: string
+  reason?: string
+  cached: boolean
+}
+
 interface Snapshot {
   ok: boolean
   error?: string
   mode: 'each-prompt' | 'start-only'
   selected: string[]
   available: AvailableSkill[]
-  missing: string[]
+  unresolved: ClassifiedSkill[]
   injected: string[]
+  /** Host-decided: Remove is offered only after a scoped resolve has run. */
+  canRemove: boolean
 }
 
 export function apply(ctx: Context): void {
@@ -61,6 +72,9 @@ export function apply(ctx: Context): void {
     '.si-save{padding:6px 16px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);cursor:pointer}',
     '.si-status{font-size:12px;opacity:.7}',
     '.si-error{color:var(--dsw-alias-state-error-primary);font-size:12px}',
+    '.si-urow{display:flex;align-items:center;gap:8px;font-size:12px}',
+    '.si-urow>.si-status{flex:1}',
+    '.si-mini{padding:2px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);cursor:pointer;font-size:12px}',
     '.si-note{padding:16px;opacity:.7}',
     '.si-dock{font-size:12px;opacity:.65;padding:2px 0;white-space:nowrap}',
   ].join('')
@@ -78,7 +92,7 @@ export function apply(ctx: Context): void {
       if (!res.ok) throw new Error('HTTP ' + res.status)
       snapshot = (await res.json()) as Snapshot
     } catch (e) {
-      snapshot = { ok: false, error: String((e as Error)?.message ?? e), mode: 'each-prompt', selected: [], available: [], missing: [], injected: [] }
+      snapshot = { ok: false, error: String((e as Error)?.message ?? e), mode: 'each-prompt', selected: [], available: [], unresolved: [], injected: [], canRemove: false }
     }
     for (const fn of listeners) fn()
   }
@@ -107,6 +121,7 @@ export function apply(ctx: Context): void {
     const [selected, setSelected] = React.useState<string[]>(snap?.selected ?? [])
     const [mode, setMode] = React.useState<'each-prompt' | 'start-only'>(snap?.mode ?? 'each-prompt')
     const [saving, setSaving] = React.useState(false)
+    const [checking, setChecking] = React.useState(false)
     const [error, setError] = React.useState<string | null>(null)
     const [saved, setSaved] = React.useState(false)
 
@@ -122,14 +137,14 @@ export function apply(ctx: Context): void {
       setSelected((prev) => (checked ? [...prev, name] : prev.filter((n) => n !== name)))
     }
 
-    async function save(): Promise<void> {
+    async function save(next?: string[]): Promise<void> {
       setSaving(true)
       setError(null)
       try {
         const res = await fetch(API_CONFIG, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mode, selected }),
+          body: JSON.stringify({ mode, selected: next ?? selected }),
         })
         const body = (await res.json()) as { ok: boolean; error?: string }
         if (!body.ok) throw new Error(body.error ?? 'HTTP ' + res.status)
@@ -139,6 +154,25 @@ export function apply(ctx: Context): void {
         setError(String((e as Error)?.message ?? e))
       } finally {
         setSaving(false)
+      }
+    }
+
+    /** Remove a name the host could not resolve — the only way out of a stale selection. */
+    async function remove(name: string): Promise<void> {
+      const next = selected.filter((n) => n !== name)
+      setSelected(next)
+      setSaved(false)
+      await save(next)
+    }
+
+    /** Re-run the same refresh the 5s poll performs, with visible feedback. */
+    async function retry(): Promise<void> {
+      setChecking(true)
+      setSaved(false)
+      try {
+        await Promise.all([poll(), new Promise((resolve) => setTimeout(resolve, 400))])
+      } finally {
+        setChecking(false)
       }
     }
 
@@ -171,8 +205,32 @@ export function apply(ctx: Context): void {
           ),
         ),
       ),
-      snap.missing.length > 0
-        ? h('div', { className: 'si-error' }, 'Missing skills (deleted or unknown): ' + snap.missing.join(', '))
+      snap.unresolved.length > 0
+        ? h(
+            'div',
+            { className: 'si-list' },
+            h('div', { className: 'si-sub' }, 'Unresolved (' + snap.unresolved.length + '):'),
+            snap.unresolved.map((u) =>
+              h(
+                'div',
+                { key: u.name, className: 'si-urow' },
+                h('span', { className: 'si-item-name' }, u.name),
+                h(
+                  'span',
+                  { className: 'si-status' },
+                  (u.reason ?? u.state) + (u.cached ? ' · still injecting the last loaded copy' : ''),
+                ),
+                h(
+                  'button',
+                  { className: 'si-mini', onClick: () => void retry(), disabled: checking },
+                  checking ? 'Checking…' : 'Retry',
+                ),
+                snap.canRemove
+                  ? h('button', { className: 'si-mini', onClick: () => void remove(u.name), disabled: saving }, 'Remove')
+                  : null,
+              ),
+            ),
+          )
         : null,
       h(
         'div',
@@ -195,10 +253,11 @@ export function apply(ctx: Context): void {
     const snap = useSnapshot()
     if (snap === null || !snap.ok) return null
     const names = snap.selected.length > 0 ? snap.selected.join(', ') : 'none'
+    const unresolved = snap.unresolved.length
     return React.createElement(
       'div',
       { className: 'si-dock' },
-      'Injected Skills: ' + names + ' · Mode: ' + snap.mode,
+      'Injected Skills: ' + names + ' · Mode: ' + snap.mode + (unresolved > 0 ? ' · ' + unresolved + ' unresolved' : ''),
     )
   }
 
