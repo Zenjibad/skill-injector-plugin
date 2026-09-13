@@ -11,6 +11,10 @@
  */
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
+// Explicit `.ts` specifier: the client entry resolves this file itself and inlines
+// it. With `../helpers.js` (the node entries' convention) rolldown leaves a
+// `require("../helpers.js")` in the browser bundle, which the module table cannot
+// resolve at runtime.
 import { cachedSuffix } from '../helpers.ts'
 
 export const inject = ['slots']
