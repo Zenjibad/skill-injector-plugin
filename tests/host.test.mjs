@@ -16,6 +16,16 @@ const PONYTAIL = {
   source: 'user-agents',
 }
 
+/** Advertised by the catalog, but not model invocable, so never `available`. */
+const HIDDEN = {
+  name: 'secret',
+  description: 'not model invocable',
+  content: 'BODY-SECRET',
+  provider: 'filesystem',
+  invocation: { modelInvocable: false, userInvocable: true },
+  source: 'user-agents',
+}
+
 /** Stub ctx exposing only the seams the host half dereferences. */
 function makeHarness(initialSettings, skills) {
   const routes = new Map()
@@ -41,7 +51,8 @@ function makeHarness(initialSettings, skills) {
       get: () => current,
       update: async (_ns, patch) => {
         updates.push(patch)
-        current = patch
+        // Cordis merges the patch into the stored user section.
+        current = { ...current, ...patch }
       },
     },
     skills,
@@ -56,7 +67,7 @@ function makeHarness(initialSettings, skills) {
       return () => listeners.delete(event)
     },
   }
-  return { ctx, routes, listeners, sections, updates }
+  return { ctx, routes, listeners, sections, updates, setSettings: (value) => { current = value } }
 }
 
 function makeRes() {
@@ -88,27 +99,28 @@ function makeAgent(id, injected, events = []) {
   }
 }
 
-/** A registry that only answers a scoped read, like the real filesystem provider. */
+/** A registry that only answers a scoped read, like the real filesystem provider.
+ *  `cwd` is required too: the repo contract is `{ scope, cwd }`, so a regression
+ *  that drops the cwd must fail this suite. */
 function scopedRegistry(advertised) {
+  const scoped = (options) => options !== undefined && options.cwd === 'C:/work'
   return {
     snapshot: async (options) =>
-      options === undefined ? { skills: [], complete: true } : { skills: advertised, complete: true },
-    list: async (options) => (options === undefined ? [] : advertised),
-    get: async (name, options) =>
-      options !== undefined && advertised.some((s) => s.name === name)
-        ? advertised.find((s) => s.name === name)
-        : undefined,
+      scoped(options) ? { skills: advertised, complete: true } : { skills: [], complete: true },
+    list: async (options) => (scoped(options) ? advertised : []),
+    get: async (name, options) => (scoped(options) ? advertised.find((s) => s.name === name) : undefined),
   }
 }
 
 test('host classifies, gates Remove on scope, and stamps a cold cache', async () => {
-  const h = makeHarness({ mode: 'start-only', selected: ['ponytail', 'llmtrim'] }, scopedRegistry([PONYTAIL]))
+  const h = makeHarness({ mode: 'start-only', selected: ['ponytail', 'llmtrim'] }, scopedRegistry([PONYTAIL, HIDDEN]))
   apply(h.ctx)
 
   // Boot: no agent scope yet, so nothing may be called unknown and Remove is off.
   const boot = await snapshot(h.routes)
   assert.equal(boot.ok, true)
   assert.equal(boot.canRemove, false)
+  assert.deepEqual(boot.available, [])
   assert.deepEqual(boot.unresolved, [
     { name: 'ponytail', state: 'no-scope', reason: 'waiting for a session to establish scope' },
     { name: 'llmtrim', state: 'no-scope', reason: 'waiting for a session to establish scope' },
@@ -123,6 +135,8 @@ test('host classifies, gates Remove on scope, and stamps a cold cache', async ()
   assert.equal(injected.length, 1)
   assert.equal(injected[0].source.name, 'ponytail')
   assert.equal(after.canRemove, true)
+  // HIDDEN is advertised but filtered out here because it is not model-invocable.
+  assert.deepEqual(after.available, [{ name: 'ponytail', description: 'lazy senior dev' }])
   assert.deepEqual(after.unresolved, [
     { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
   ])
@@ -139,7 +153,10 @@ test('host classifies, gates Remove on scope, and stamps a cold cache', async ()
   const second = []
   h.listeners.get('agent/session-start')({
     agent: makeAgent('session-2', second, [
-      { type: 'user/message', data: { source: { kind: 'skill-invocation', name: 'ponytail' } } },
+      {
+        type: 'user/message',
+        data: { source: { kind: 'skill-invocation', name: 'ponytail', form: 'instructions' } },
+      },
     ]),
     source: 'new',
   })
@@ -154,12 +171,16 @@ test('a transient failure keeps injecting the last-good body; only unknown drops
   let advertised = [PONYTAIL]
   let complete = true
   let getThrows = false
+  let snapshotThrows = false
+  const scoped = (options) => options !== undefined && options.cwd === 'C:/work'
   const skills = {
-    snapshot: async (options) =>
-      options === undefined ? { skills: [], complete: true } : { skills: advertised, complete },
-    list: async (options) => (options === undefined ? [] : advertised),
+    snapshot: async (options) => {
+      if (snapshotThrows) throw new Error('registry exploded')
+      return scoped(options) ? { skills: advertised, complete } : { skills: [], complete: true }
+    },
+    list: async (options) => (scoped(options) ? advertised : []),
     get: async (name, options) => {
-      if (options === undefined || name !== 'ponytail') return undefined
+      if (!scoped(options) || name !== 'ponytail') return undefined
       if (getThrows) throw new Error('EACCES')
       return PONYTAIL
     },
@@ -167,6 +188,7 @@ test('a transient failure keeps injecting the last-good body; only unknown drops
   const h = makeHarness({ mode: 'each-prompt', selected: ['ponytail', 'llmtrim'] }, skills)
   apply(h.ctx)
   const section = () => h.sections[0].text()
+  assert.equal(typeof h.sections[0]?.text, 'function')
   assert.equal(section(), '')
 
   // Scope arrives, then a clean pass renders the body into the section.
@@ -183,6 +205,16 @@ test('a transient failure keeps injecting the last-good body; only unknown drops
     { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
   ])
   assert.match(section(), /BODY-PONYTAIL/)
+
+  // A failed catalog read is unavailable with the thrown message, still transient.
+  snapshotThrows = true
+  const errored = await snapshot(h.routes)
+  assert.deepEqual(errored.unresolved.map((u) => [u.name, u.state, u.reason]), [
+    ['ponytail', 'unavailable', 'registry exploded'],
+    ['llmtrim', 'unavailable', 'registry exploded'],
+  ])
+  assert.match(section(), /BODY-PONYTAIL/)
+  snapshotThrows = false
 
   // Incomplete discovery is transient too, and must never read as a deletion.
   getThrows = false
@@ -202,38 +234,46 @@ test('a transient failure keeps injecting the last-good body; only unknown drops
   assert.equal(section(), '')
 })
 
-test('a newly established scope does not inherit an in-flight unscoped pass', async () => {
+test('a newly established scope does not inherit an in-flight unscoped pass', { timeout: 5000 }, async () => {
   let release
   const parked = new Promise((resolve) => {
     release = resolve
   })
   let snapshotCalls = 0
+  let snapshotOptions
+  const scoped = (options) => options !== undefined && options.cwd === 'C:/work'
   const skills = {
     snapshot: async (options) => {
       snapshotCalls += 1
-      if (options === undefined) {
+      if (options !== undefined) snapshotOptions = options
+      if (!scoped(options)) {
         await parked
         return { skills: [], complete: true }
       }
       return { skills: [PONYTAIL], complete: true }
     },
-    list: async (options) => (options === undefined ? [] : [PONYTAIL]),
-    get: async (name, options) => (options !== undefined && name === 'ponytail' ? PONYTAIL : undefined),
+    list: async (options) => (scoped(options) ? [PONYTAIL] : []),
+    get: async (name, options) => (scoped(options) && name === 'ponytail' ? PONYTAIL : undefined),
   }
   const h = makeHarness({ mode: 'start-only', selected: ['ponytail', 'llmtrim'] }, skills)
   apply(h.ctx) // the boot pass parks on its unscoped catalog read
+  assert.equal(typeof h.sections[0]?.text, 'function')
 
   const injected = []
   h.listeners.get('agent/session-start')({ agent: makeAgent('s1', injected), source: 'new' })
-  const scoped = await snapshot(h.routes)
+  // The scope-change read must carry the repo's `{ scope, cwd }` contract.
+  assert.equal(snapshotOptions.cwd, 'C:/work')
+  const scopedSnap = await snapshot(h.routes)
 
   // Scoped truth, not the parked boot pass's unscoped rows. Before the pass key
   // existed this snapshot joined the parked pass and reported both as no-scope.
-  assert.equal(scoped.canRemove, true)
-  assert.deepEqual(scoped.unresolved, [
+  assert.equal(scopedSnap.canRemove, true)
+  assert.deepEqual(scopedSnap.unresolved, [
     { name: 'llmtrim', state: 'unknown', reason: 'not in the skill catalog' },
   ])
-  assert.ok(snapshotCalls >= 2, 'a scope change must start its own pass')
+  // Exactly two reads: the boot read plus the scope change's own read. A pass
+  // that joined the parked unscoped one instead would make this one.
+  assert.equal(snapshotCalls, 2)
 
   // The stale pass settling last must not overwrite the scoped result.
   release()
@@ -245,14 +285,15 @@ test('a newly established scope does not inherit an in-flight unscoped pass', as
 
 test('identical concurrent triggers share one catalog read', async () => {
   let snapshotCalls = 0
+  const scoped = (options) => options !== undefined && options.cwd === 'C:/work'
   const skills = {
     snapshot: async (options) => {
       snapshotCalls += 1
       await new Promise((resolve) => setTimeout(resolve, 10))
-      return options === undefined ? { skills: [], complete: true } : { skills: [PONYTAIL], complete: true }
+      return scoped(options) ? { skills: [PONYTAIL], complete: true } : { skills: [], complete: true }
     },
-    list: async (options) => (options === undefined ? [] : [PONYTAIL]),
-    get: async (name, options) => (options !== undefined && name === 'ponytail' ? PONYTAIL : undefined),
+    list: async (options) => (scoped(options) ? [PONYTAIL] : []),
+    get: async (name, options) => (scoped(options) && name === 'ponytail' ? PONYTAIL : undefined),
   }
   const h = makeHarness({ mode: 'each-prompt', selected: ['ponytail'] }, skills)
   apply(h.ctx)
@@ -261,4 +302,121 @@ test('identical concurrent triggers share one catalog read', async () => {
 
   await Promise.all([snapshot(h.routes), snapshot(h.routes)])
   assert.equal(snapshotCalls - before, 1)
+})
+
+test('a stale pass settling late cannot resurrect a dropped body', async () => {
+  let release
+  const parked = new Promise((resolve) => {
+    release = resolve
+  })
+  // Resolved once the parked pass has walked past its own commit point.
+  // `await parked` alone is not enough: the host's pass still has a `.finally()`
+  // and a `.then()` hop to cross, so the assertion would run *before* the commit
+  // and the guard could be deleted with this test staying green.
+  let parkedDone
+  const settled = new Promise((resolve) => {
+    parkedDone = resolve
+  })
+  let parkedOnce = false
+  let advertised = [PONYTAIL]
+  let snapshotOptions
+  const scoped = (options) => options !== undefined && options.cwd === 'C:/work'
+  const skills = {
+    snapshot: async (options) => {
+      if (options !== undefined) snapshotOptions = options
+      if (scoped(options) && !parkedOnce) {
+        parkedOnce = true
+        await parked // park the first scoped pass
+        return { skills: [PONYTAIL], complete: true }
+      }
+      return scoped(options) ? { skills: advertised, complete: true } : { skills: [], complete: true }
+    },
+    list: async (options) => (scoped(options) ? advertised : []),
+    get: async (name, options) => {
+      const out = scoped(options) && name === 'ponytail' ? PONYTAIL : undefined
+      if (parkedOnce) parkedDone()
+      return out
+    },
+  }
+  const h = makeHarness({ mode: 'each-prompt', selected: ['ponytail'] }, skills)
+  apply(h.ctx)
+  const section = () => h.sections[0].text()
+  assert.equal(typeof h.sections[0]?.text, 'function')
+
+  // The scope arrives while the first scoped pass is still parked.
+  const injected = []
+  h.listeners.get('agent/session-start')({ agent: makeAgent('s1', injected), source: 'new' })
+  // Pin the `{ scope, cwd }` contract where the registry sees it: without a
+  // forwarded cwd the pass below never parks and this test would hang instead of
+  // failing, so this assertion is what makes a dropped cwd fail fast.
+  assert.equal(snapshotOptions.cwd, 'C:/work')
+  assert.equal(section(), '')
+
+  // A newer pass with a different selection sees a complete catalog without the
+  // skill, so it drops the body.
+  h.setSettings({ mode: 'each-prompt', selected: ['ponytail', 'llmtrim'] })
+  advertised = []
+  h.listeners.get('settings/updated')('skill-injector')
+  const gone = await snapshot(h.routes)
+  assert.deepEqual(gone.unresolved.map((u) => [u.name, u.state]), [
+    ['ponytail', 'unknown'],
+    ['llmtrim', 'unknown'],
+  ])
+  assert.equal(section(), '')
+
+  // The parked pass settles last still holding a body for a name that is gone.
+  // Without the pass-id commit guard this resurrects it into the section.
+  release()
+  await settled
+  // The commit is a handful of microtasks past the body load: one per awaited
+  // leg (snapshot, get) plus the pass's own `.finally()`/`.then()` wrappers.
+  for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  assert.equal(section(), '')
+})
+
+test('the config route validates before it writes and always answers JSON', async () => {
+  const h = makeHarness({ mode: 'each-prompt', selected: [] }, scopedRegistry([PONYTAIL]))
+  apply(h.ctx)
+
+  const put = async (body) => {
+    const res = makeRes()
+    await h.routes.get('/skill-injector/api/config')([body], res)
+    return { status: res.status, snap: JSON.parse(res.body) }
+  }
+
+  const ok = await put(JSON.stringify({ mode: 'start-only', selected: ['ponytail'] }))
+  assert.equal(ok.status, 200)
+  assert.equal(ok.snap.ok, true)
+  assert.equal(ok.snap.mode, 'start-only')
+  assert.deepEqual(ok.snap.selected, ['ponytail'])
+  assert.deepEqual(h.updates, [{ mode: 'start-only', selected: ['ponytail'] }])
+
+  const malformed = await put('{not json')
+  assert.equal(malformed.status, 400)
+  assert.equal(malformed.snap.ok, false)
+  assert.equal(typeof malformed.snap.error, 'string')
+
+  const invalid = await put(JSON.stringify({ mode: 'nope', selected: [] }))
+  assert.equal(invalid.status, 400)
+  assert.equal(invalid.snap.ok, false)
+})
+
+test('the section escapes braces while a stamped message stays raw', async () => {
+  const braced = { ...PONYTAIL, content: 'uses {{model}} verbatim' }
+
+  const eachPrompt = makeHarness({ mode: 'each-prompt', selected: ['ponytail'] }, scopedRegistry([braced]))
+  apply(eachPrompt.ctx)
+  const skipped = []
+  eachPrompt.listeners.get('agent/session-start')({ agent: makeAgent('s1', skipped), source: 'new' })
+  await snapshot(eachPrompt.routes)
+  assert.match(eachPrompt.sections[0].text(), /&#123;&#123;model}}/)
+  assert.ok(!eachPrompt.sections[0].text().includes('{{model}}'), 'the section must not keep raw braces')
+
+  const startOnly = makeHarness({ mode: 'start-only', selected: ['ponytail'] }, scopedRegistry([braced]))
+  apply(startOnly.ctx)
+  const injected = []
+  startOnly.listeners.get('agent/session-start')({ agent: makeAgent('s2', injected), source: 'new' })
+  await snapshot(startOnly.routes)
+  assert.equal(injected.length, 1)
+  assert.match(injected[0].content[0].text, /\{\{model\}\}/)
 })
