@@ -232,3 +232,51 @@ test('applyBodies drops deselected names and never invents a body', () => {
   assert.deepEqual([...next], [['alpha', 'old-alpha']])
   assert.deepEqual([...applyBodies(new Map(), [{ name: 'x', state: 'no-scope', reason: 'r' }], new Map())], [])
 })
+
+test('classifySelection defaults the reason for an advertised name with no load entry', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'scoped', names: ['alpha'], complete: true },
+    scoped: true,
+    loads: new Map(),
+  })
+  assert.deepEqual(rows, [
+    { name: 'alpha', state: 'load-failed', reason: 'skill body could not be loaded' },
+  ])
+})
+
+test('classifySelection treats an empty load reason as no reason', () => {
+  const rows = classifySelection({
+    selected: ['alpha'],
+    catalog: { kind: 'scoped', names: ['alpha'], complete: true },
+    scoped: true,
+    loads: new Map([['alpha', { ok: false, reason: '' }]]),
+  })
+  assert.deepEqual(rows, [
+    { name: 'alpha', state: 'load-failed', reason: 'skill body could not be loaded' },
+  ])
+})
+
+test('applyBodies keeps last-good for both transient states', () => {
+  const prev = new Map([
+    ['a', 'old-a'],
+    ['b', 'old-b'],
+  ])
+  const next = applyBodies(
+    prev,
+    [
+      { name: 'a', state: 'load-failed', reason: 'boom' },
+      { name: 'b', state: 'no-scope', reason: 'waiting' },
+    ],
+    new Map(),
+  )
+  assert.deepEqual([...next], [
+    ['a', 'old-a'],
+    ['b', 'old-b'],
+  ])
+})
+
+test('applyBodies drops a ready row that has no fresh body', () => {
+  const next = applyBodies(new Map([['a', 'OLD']]), [{ name: 'a', state: 'ready' }], new Map())
+  assert.deepEqual([...next], [])
+})

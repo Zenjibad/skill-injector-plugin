@@ -117,7 +117,8 @@ export function classifySelection(input: {
       return {
         name,
         state: 'load-failed',
-        reason: load !== undefined && load.reason !== undefined ? load.reason : 'skill body could not be loaded',
+        // An empty message is no reason at all; `||` (not `??`) so the UI never shows a blank row.
+        reason: load?.reason || 'skill body could not be loaded',
       }
     }
     if (catalog.kind === 'error') return { name, state: 'unavailable', reason: catalog.reason }
