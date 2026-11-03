@@ -48,6 +48,8 @@ interface Snapshot {
   injected: string[]
   /** Host-decided: Remove is offered only after a scoped resolve has run. */
   canRemove: boolean
+  /** Omitted by a host that predates the dock toggle; treated as `true`. */
+  showDock?: boolean
 }
 
 export function apply(ctx: Context): void {
@@ -106,6 +108,9 @@ export function apply(ctx: Context): void {
       unresolved: raw.unresolved ?? [],
       injected: raw.injected ?? [],
       canRemove: raw.canRemove === true,
+      // Only an explicit `false` hides the line, so an older host that omits the
+      // field keeps the pre-toggle behaviour.
+      showDock: raw.showDock !== false,
     }
   }
 
@@ -126,6 +131,7 @@ export function apply(ctx: Context): void {
         unresolved: [],
         injected: [],
         canRemove: false,
+        showDock: true,
       }
     }
     if (seq !== pollSeq) return // superseded by a newer request
@@ -156,6 +162,7 @@ export function apply(ctx: Context): void {
     const h = React.createElement
     const [selected, setSelected] = React.useState<string[]>(snap?.selected ?? [])
     const [mode, setMode] = React.useState<'each-prompt' | 'start-only'>(snap?.mode ?? 'each-prompt')
+    const [showDock, setShowDock] = React.useState<boolean>(snap?.showDock ?? true)
     const [saving, setSaving] = React.useState(false)
     const [checking, setChecking] = React.useState(false)
     const [error, setError] = React.useState<string | null>(null)
@@ -166,7 +173,8 @@ export function apply(ctx: Context): void {
       if (snap === null) return
       setSelected(snap.selected)
       setMode(snap.mode)
-    }, [snap?.mode, JSON.stringify(snap?.selected)])
+      setShowDock(snap.showDock !== false)
+    }, [snap?.mode, JSON.stringify(snap?.selected), snap?.showDock])
 
     function toggle(name: string, checked: boolean): void {
       setSaved(false)
@@ -180,7 +188,7 @@ export function apply(ctx: Context): void {
         const res = await fetch(API_CONFIG, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mode, selected: next ?? selected }),
+          body: JSON.stringify({ mode, selected: next ?? selected, showDock }),
         })
         const body = (await res.json()) as { ok: boolean; error?: string }
         if (!body.ok) throw new Error(body.error ?? 'HTTP ' + res.status)
@@ -293,6 +301,19 @@ export function apply(ctx: Context): void {
         h('label', null, h('input', { type: 'radio', name: 'si-mode', checked: mode === 'each-prompt', onChange: () => setMode('each-prompt') }), 'Inject every prompt'),
         h('label', null, h('input', { type: 'radio', name: 'si-mode', checked: mode === 'start-only', onChange: () => setMode('start-only') }), 'Inject once at session start'),
       ),
+      h(
+        'label',
+        { className: 'si-modes' },
+        h('input', {
+          type: 'checkbox',
+          checked: showDock,
+          onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+            setSaved(false)
+            setShowDock(e.target.checked)
+          },
+        }),
+        'Show the injected-skills line under the composer',
+      ),
       h('button', { className: 'si-save', onClick: () => void save(), disabled: saving }, saving ? 'Saving…' : 'Save'),
       error !== null ? h('div', { className: 'si-error' }, error) : null,
       saved ? h('div', { className: 'si-status' }, 'Saved') : null,
@@ -307,6 +328,8 @@ export function apply(ctx: Context): void {
   function DockLine(): React.ReactElement | null {
     const snap = useSnapshot()
     if (snap === null || !snap.ok) return null
+    // User opt-out: the settings page carries the same information inline.
+    if (snap.showDock === false) return null
     const names = snap.selected.length > 0 ? snap.selected.join(', ') : 'none'
     const unresolved = snap.unresolved.length
     return React.createElement(

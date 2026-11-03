@@ -55,10 +55,10 @@ const MAX_TRACKED_AGENTS = 200
  * selected". The native configuration form is generated from this schema
  * (`auto: false` turns that page off — the bundle ships its own).
  *
- * Both fields are `.volatile()` on purpose. `ctx.settings.update()` refuses to
- * write a field that is not "volatile", and the Loader compares a config change
- * field-by-field for volatile nodes: a write that touches only these fields is
- * committed IN PLACE (the same wrappers get new values and
+ * All three fields are `.volatile()` on purpose. `ctx.settings.update()` refuses
+ * to write a field that is not "volatile", and the Loader compares a config
+ * change field-by-field for volatile nodes: a write that touches only these
+ * fields is committed IN PLACE (the same wrappers get new values and
  * `loader/volatile-update` fires) instead of reloading the entry. That is what
  * keeps this plugin's route registrations, body cache and agent scope alive
  * across a Save.
@@ -66,6 +66,9 @@ const MAX_TRACKED_AGENTS = 200
 export const Config = z.object({
   mode: z.union([z.const('each-prompt'), z.const('start-only')]).default('each-prompt').volatile(),
   selected: z.array(z.string()).default([]).volatile(),
+  // Opt-out for the composer dock line: users running other dock contributions
+  // need a way to reclaim the space without patching the built client bundle.
+  showDock: z.boolean().default(true).volatile(),
 })
 
 // Hard deps: webServer serves the routes, settings persists the selection,
@@ -113,6 +116,8 @@ interface Snapshot {
   injected: string[]
   /** True once a scoped resolve has run, so the UI never offers Remove off the boot race. */
   canRemove: boolean
+  /** Whether the client should render the composer dock line (user opt-out). */
+  showDock: boolean
 }
 
 /** One classification pass: the inputs it was computed from, plus its rows. */
@@ -180,6 +185,7 @@ interface VolatileValue<T> {
 interface PluginConfig {
   mode?: VolatileValue<string> | string
   selected?: VolatileValue<string[]> | string[]
+  showDock?: VolatileValue<boolean> | boolean
 }
 
 /** Unwrap a volatile reference, tolerating a plain value (older hosts, tests). */
@@ -192,12 +198,13 @@ function readLive<T>(value: VolatileValue<T> | T | undefined, fallback: T): T {
 }
 
 /** Normalize the Loader-supplied Config into a validated InjectorConfig. */
-function resolveConfig(raw: { mode?: unknown; selected?: unknown }): InjectorConfig {
+function resolveConfig(raw: { mode?: unknown; selected?: unknown; showDock?: unknown }): InjectorConfig {
   const r = validateSelection({
     mode: raw.mode ?? 'each-prompt',
     selected: Array.isArray(raw.selected) ? raw.selected : [],
+    showDock: raw.showDock ?? true,
   })
-  return r.ok ? r.config : { mode: 'each-prompt', selected: [] }
+  return r.ok ? r.config : { mode: 'each-prompt', selected: [], showDock: true }
 }
 
 /**
@@ -235,6 +242,7 @@ export function apply(ctx: Context, pluginConfig?: PluginConfig): void {
     return resolveConfig({
       mode: readLive(pluginConfig?.mode, 'each-prompt'),
       selected: readLive(pluginConfig?.selected, []),
+      showDock: readLive(pluginConfig?.showDock, true),
     })
   }
 
@@ -544,6 +552,7 @@ export function apply(ctx: Context, pluginConfig?: PluginConfig): void {
       missing: unresolved.map((u) => u.name),
       injected: currentAgentId !== null ? (injectedByAgent.get(currentAgentId) ?? []) : [],
       canRemove: hasScopedRead,
+      showDock: config().showDock,
     }
   }
 
@@ -638,7 +647,12 @@ export function apply(ctx: Context, pluginConfig?: PluginConfig): void {
           // background for the next poll.
           await settings.update(ENTRY_ID, r.config)
           void resolveSelection()
-          json(res, 200, { ok: true, mode: r.config.mode, selected: r.config.selected })
+          json(res, 200, {
+            ok: true,
+            mode: r.config.mode,
+            selected: r.config.selected,
+            showDock: r.config.showDock,
+          })
         } catch (e) {
           json(res, 500, { ok: false, error: errorText(e) })
         }

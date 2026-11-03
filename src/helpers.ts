@@ -5,6 +5,11 @@ export type InjectMode = 'each-prompt' | 'start-only'
 export interface InjectorConfig {
   mode: InjectMode
   selected: string[]
+  /**
+   * Render the composer dock line (`Injected Skills: … · Mode: …`).
+   * Defaults to `true` so existing installs keep the line; opt-out only.
+   */
+  showDock: boolean
 }
 
 /** Prompt-bloat guard: at most this many skills can be selected. */
@@ -37,6 +42,11 @@ export function validateSelection(
   if (!Array.isArray(raw.selected)) {
     return { ok: false, error: 'selected must be an array of skill names' }
   }
+  // Optional: absent means "keep the dock line" (the pre-toggle behaviour), so a
+  // body from an older client still validates.
+  if (raw.showDock !== undefined && typeof raw.showDock !== 'boolean') {
+    return { ok: false, error: 'showDock must be a boolean' }
+  }
   const selected: string[] = []
   for (const name of raw.selected) {
     if (typeof name !== 'string' || !isSkillName(name)) {
@@ -47,7 +57,7 @@ export function validateSelection(
   if (selected.length > MAX_SELECTED) {
     return { ok: false, error: `too many skills (max ${MAX_SELECTED})` }
   }
-  return { ok: true, config: { mode, selected } }
+  return { ok: true, config: { mode, selected, showDock: raw.showDock !== false } }
 }
 
 /**

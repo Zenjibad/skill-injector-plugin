@@ -28,7 +28,26 @@ test('isSkillName accepts kebab-case and rejects others', () => {
 test('validateSelection accepts a valid config', () => {
   const r = validateSelection({ mode: 'each-prompt', selected: ['caveman', 'ponytail'] })
   assert.equal(r.ok, true)
-  assert.deepEqual(r.config, { mode: 'each-prompt', selected: ['caveman', 'ponytail'] })
+  assert.deepEqual(r.config, { mode: 'each-prompt', selected: ['caveman', 'ponytail'], showDock: true })
+})
+
+test('validateSelection treats showDock as opt-out: absent means visible', () => {
+  const absent = validateSelection({ mode: 'each-prompt', selected: [] })
+  assert.equal(absent.ok, true)
+  assert.equal(absent.config.showDock, true, 'an older client body must keep the dock line')
+
+  const off = validateSelection({ mode: 'each-prompt', selected: [], showDock: false })
+  assert.equal(off.ok, true)
+  assert.equal(off.config.showDock, false)
+
+  const on = validateSelection({ mode: 'each-prompt', selected: [], showDock: true })
+  assert.equal(on.config.showDock, true)
+})
+
+test('validateSelection rejects a non-boolean showDock', () => {
+  const r = validateSelection({ mode: 'each-prompt', selected: [], showDock: 'yes' })
+  assert.equal(r.ok, false)
+  assert.match(r.error, /showDock/)
 })
 
 test('validateSelection rejects bad mode', () => {
@@ -64,7 +83,7 @@ test('validateSelection cap applies after dedupe', () => {
 test('validateSelection accepts empty selection', () => {
   const r = validateSelection({ mode: 'each-prompt', selected: [] })
   assert.equal(r.ok, true)
-  assert.deepEqual(r.config, { mode: 'each-prompt', selected: [] })
+  assert.deepEqual(r.config, { mode: 'each-prompt', selected: [], showDock: true })
 })
 
 test('validateSelection rejects missing mode', () => {

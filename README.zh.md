@@ -28,7 +28,7 @@
 | 功能 | 说明 |
 | --- | --- |
 | ⚙️ **设置页** | 设置 → Skill Injector：可用技能复选框列表、注入模式单选、保存；未注入的技能逐条列出原因并提供“重试”（建立会话作用域后还提供“移除”） |
-| 🪧 **输入区指示** | 聊天输入框下方一行：`Injected Skills: caveman, ponytail · Mode: each-prompt`，每 5 秒刷新（存在未解析技能时追加 ` · N unresolved` 后缀） |
+| 🪧 **输入区指示** | 聊天输入框下方一行：`Injected Skills: caveman, ponytail · Mode: each-prompt`，每 5 秒刷新（存在未解析技能时追加 ` · N unresolved` 后缀）；可在设置页关闭该指示行 |
 | 🔁 **两种注入模式** | `each-prompt`（系统提示词分区，每次请求重新渲染）vs `start-only`（会话开始时盖戳一条持久的技能调用消息） |
 | 📚 **实时技能注册表** | 加载时从 `ctx.skills` 读取技能正文；不复制任何文件；每个已选技能都会被分类（`ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`），暂时性失败会继续注入上一次的正文 |
 | 🧩 **包含子代理** | 注入同样作用于子代理（语气一致；不过滤） |
@@ -89,14 +89,15 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 
 ## ⚙️ 配置
 
-无需手工编辑配置文件。设置即插件的 Loader **Config**（`mode` + `selected`），通过 设置 → Skill Injector 编辑；保存会把它们写入 profile 补丁文件中本插件的 `config:` 块，因此重启后依然保留：
+无需手工编辑配置文件。设置即插件的 Loader **Config**（`mode` + `selected` + `showDock`），通过 设置 → Skill Injector 编辑；保存会把它们写入 profile 补丁文件中本插件的 `config:` 块，因此重启后依然保留：
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `mode` | `'each-prompt'` | 注入模式：`'each-prompt'`（系统提示词分区，每次请求）或 `'start-only'`（会话开始时盖戳一条消息） |
 | `selected` | `[]` | 要注入的 kebab-case 技能名（最多 16 个，经校验；重复项去重） |
+| `showDock` | `true` | 是否渲染输入区下方的 `Injected Skills: …` 指示行；设为 `false` 可隐藏（设置页仍显示同样状态） |
 
-两个字段都声明为 `.volatile()`——正因如此，DSH 可以在不重载插件的前提下持久化修改：保存后下一次提示即生效，设置页与输入区指示保持在线。空值或无效值会回退到 `{ mode: 'each-prompt', selected: [] }`。
+三个字段都声明为 `.volatile()`——正因如此，DSH 可以在不重载插件的前提下持久化修改：保存后下一次提示即生效，设置页与输入区指示保持在线。空值或无效值会回退到 `{ mode: 'each-prompt', selected: [], showDock: true }`。
 
 ## ❓ 常见问题
 

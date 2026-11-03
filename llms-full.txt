@@ -42,7 +42,7 @@ Settings page (browser)
   └─ user picks skills + injection mode
              │ PUT /skill-injector/api/config
 Host half (DSH process) ▼
-  └─ Loader Config: mode + selected (volatile settings fields)
+  └─ Loader Config: mode + selected + showDock (volatile settings fields)
   └─ ctx.skills.get(name) → live skill bodies from the skill registry
   └─ each-prompt: systemPrompt.section (re-rendered every request)
      OR start-only: agent.inject() on agent/created (one stamp per skill)
@@ -89,14 +89,14 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 
 ## ⚙️ Configuration
 
-No config file to edit. Settings are the plugin's Loader **Config** (`mode` + `selected`), edited from Settings → Skill Injector; saving writes them into the profile's patch file as this entry's `config:` block, so they survive restarts:
+No config file to edit. Settings are the plugin's Loader **Config** (`mode` + `selected` + `showDock`), edited from Settings → Skill Injector; saving writes them into the profile's patch file as this entry's `config:` block, so they survive restarts:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `'each-prompt'` | Injection mode: `'each-prompt'` (system-prompt section, every request) or `'start-only'` (one stamped message at session start) |
 | `selected` | `[]` | Kebab-case skill names to inject (max 16, validated; duplicates deduped) |
 
-Both fields are declared `.volatile()`, which is what lets DSH persist an edit without reloading the plugin — a Save takes effect on the next prompt and keeps the settings page and dock line live. An empty or invalid value degrades to `{ mode: 'each-prompt', selected: [] }`.
+All three fields are declared `.volatile()`, which is what lets DSH persist an edit without reloading the plugin — a Save takes effect on the next prompt and keeps the settings page and dock line live. An empty or invalid value degrades to `{ mode: 'each-prompt', selected: [], showDock: true }`.
 
 ## ❓ FAQ
 
@@ -163,7 +163,7 @@ This file helps AI coding agents and LLM tooling understand and work with this r
 
 ## What this repo is
 
-`skill-injector-plugin` is a **packaged Cordis plugin for DeepSeek Harness (DSH)** that auto-injects user-chosen skills (e.g. `caveman`, `ponytail`) into sessions — either every prompt (`each-prompt` via a `systemPrompt.section`) or once at session start (`start-only` via `agent.inject()` on `agent/created`) — with a settings page and a composer dock line. It is a real profile-bundled plugin: `dsh.bundle` (`cordis.patch.yml`) mounts the host half, and the `dsh.client` declaration + `exports["./client"]` register the browser half — install once with `dsh plugin add`, loads on every DSH boot, no cordis_define. The host half declares its settings as the plugin's Loader **Config** (`mode` + `selected`), reads skill bodies from the live `ctx.skills` registry, and serves the snapshot over `GET /skill-injector/api` (plus `PUT /skill-injector/api/config` for writes); the client half polls every 5s and renders a `settings.section` form and a `conversation.composer.dock` line. The client↔host seam is **HTTP only** — there is no `harness.handle`/`host.call` RPC for packaged plugins.
+`skill-injector-plugin` is a **packaged Cordis plugin for DeepSeek Harness (DSH)** that auto-injects user-chosen skills (e.g. `caveman`, `ponytail`) into sessions — either every prompt (`each-prompt` via a `systemPrompt.section`) or once at session start (`start-only` via `agent.inject()` on `agent/created`) — with a settings page and a composer dock line. It is a real profile-bundled plugin: `dsh.bundle` (`cordis.patch.yml`) mounts the host half, and the `dsh.client` declaration + `exports["./client"]` register the browser half — install once with `dsh plugin add`, loads on every DSH boot, no cordis_define. The host half declares its settings as the plugin's Loader **Config** (`mode` + `selected` + `showDock`), reads skill bodies from the live `ctx.skills` registry, and serves the snapshot over `GET /skill-injector/api` (plus `PUT /skill-injector/api/config` for writes); the client half polls every 5s and renders a `settings.section` form and a `conversation.composer.dock` line. The client↔host seam is **HTTP only** — there is no `harness.handle`/`host.call` RPC for packaged plugins.
 
 Targets **DSH 0.2.x** (`^0.2.1-rc.5` for `@deepseek-ai/dsh-skill` / `dsh-llm`, `@deepseek-ai/cordis` `^4.0.5`).
 
@@ -171,15 +171,15 @@ Targets **DSH 0.2.x** (`^0.2.1-rc.5` for `@deepseek-ai/dsh-skill` / `dsh-llm`, `
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Host half: exported `Config` (schemastery, both fields `.volatile()`), `resolveSelection` (catalog snapshot + per-name classification) publishing a last-good body map, `systemPrompt.section` (each-prompt, order 150) + two-pass `agent/created` injection (start-only, deduped), `webServer` routes `GET /skill-injector/api` + `PUT /skill-injector/api/config`. |
+| `src/index.ts` | Host half: exported `Config` (schemastery, all three fields `.volatile()`), `resolveSelection` (catalog snapshot + per-name classification) publishing a last-good body map, `systemPrompt.section` (each-prompt, order 150) + two-pass `agent/created` injection (start-only, deduped), `webServer` routes `GET /skill-injector/api` + `PUT /skill-injector/api/config`. |
 | `src/helpers.ts` | Pure helpers (separate build entry for unit testing): `validateSelection`, `escapePromptBraces`, `buildInjectionMessage`, `classifySelection`, `applyBodies`, `cachedSuffix`, `isSkillName`, `MAX_SELECTED`, types. |
 | `src/client/index.tsx` | Client bundle: single 5s poller `fetch('/skill-injector/api')`, `settings.section` id `skill-injector` (order 60; unresolved rows with per-skill Retry + Remove), `conversation.composer.dock` id `skill-injector-dock` (order 10). |
 | `cordis.patch.yml` | `dsh.bundle.patch`: inserts the plugin row `{id: skill-injector-plugin, name: 'skill-injector-plugin'}`. |
 | `tsdown.config.ts` | Builds host (node ESM → `lib/index.js`), helpers (node ESM → `lib/helpers.js`), client (browser CJS ModuleLoader closure → `lib/client.js`, bundle id = package name). |
 | `package.json` | `exports["./client"]`, `dsh.bundle.patch`, `dsh.client` (`platform: 'web'`, `inject: []`), peers react + @deepseek-ai/cordis, deps @deepseek-ai/dsh-llm + dsh-skill + schemastery. |
 | `pnpm-workspace.yaml` | `nodeLinker: hoisted` (Windows junctions break tsdown's transitive resolution under the stricter layout) + `allowBuilds: { esbuild: false }`. |
-| `tests/helpers.test.mjs` | node:test unit tests against `lib/helpers.js` (30 tests), including `classifySelection`, `applyBodies`, and `cachedSuffix`. |
-| `tests/host.test.mjs` | node:test smoke tests (9) driving `apply()` with a stub Cordis context: the Config contract, resolve states, last-good retention through the rendered section, the `canRemove` scope gate, cold-cache stamping and dedupe, the scope-transition pass key, the live-config Save path, lazy scope recovery, the `PUT` config route, and brace escaping. |
+| `tests/helpers.test.mjs` | node:test unit tests against `lib/helpers.js` (32 tests), including `classifySelection`, `applyBodies`, and `cachedSuffix`. |
+| `tests/host.test.mjs` | node:test smoke tests (10) driving `apply()` with a stub Cordis context: the Config contract, resolve states, last-good retention through the rendered section, the `canRemove` scope gate, cold-cache stamping and dedupe, the scope-transition pass key, the live-config Save path, lazy scope recovery, the `PUT` config route, and brace escaping. |
 | `tests/fixtures/sample-skill.json` | Real-shape skill definition as `ctx.skills.get` returns it. |
 | `README.md` / `README.zh.md` | Human docs (en default, zh). |
 | `llms.txt` / `llms-full.txt` | LLM-friendly doc index / full text. |
@@ -188,8 +188,8 @@ Targets **DSH 0.2.x** (`^0.2.1-rc.5` for `@deepseek-ai/dsh-skill` / `dsh-llm`, `
 
 1. **Packaged, not dynamic**: install via `dsh plugin add` (or profile `link:` dep + restart). Do NOT revert to a dynamic `cordis_define`-only shape.
 2. **Client talks to host over HTTP only**: the client bundle polls `/skill-injector/api` and PUTs `/skill-injector/api/config` (host `webServer` routes). Do not reintroduce the dynamic `harness.handle`/`host.call` seam — it does not exist for packaged plugins.
-3. **Settings are the plugin's Loader Config, and both fields MUST stay `.volatile()`**:
-   - `export const Config = z.object({ mode: …, selected: … })`; the Loader validates it through cordis's Standard-Schema probe and hands the result to `apply(ctx, config)`.
+3. **Settings are the plugin's Loader Config, and all three fields MUST stay `.volatile()`**:
+   - `export const Config = z.object({ mode: …, selected: …, showDock: … })`; the Loader validates it through cordis's Standard-Schema probe and hands the result to `apply(ctx, config)`.
    - Volatile output is a **reference with `.get()`**, not a plain value: always read through `readLive(...)`/`config()` so a Save is visible immediately.
    - `ctx.settings.update(entryId, patch)` **refuses a non-volatile field** (`volatileForm`/`isVolatilePath` in `dsh-settings`), and the Loader only commits a volatile-only change **in place** (it swaps the references and emits `loader/volatile-update`) instead of reloading the entry. Dropping `.volatile()` breaks Save in two ways at once.
    - `entryId` is the profile patch row id, resolved from `ctx.get('loader').entries()` by `options.name === 'skill-injector-plugin'`, falling back to the package name.
@@ -241,8 +241,8 @@ Targets **DSH 0.2.x** (`^0.2.1-rc.5` for `@deepseek-ai/dsh-skill` / `dsh-llm`, `
 ## Testing
 
 - **Before restart**: verify the profile installed the bundle — `~/.dsh/profiles/<name>/package.json` `dependencies` and `dsh.profile.bundles` both list `skill-injector-plugin`; `lib/client.js` has the ModuleLoader wrapper (`id: "skill-injector-plugin"`) and `inject = ["slots"]`; `lib/index.js` exports `name` + `Config` + `inject` + `apply`.
-- **After restart**: `GET /skill-injector/api` (in the browser, same origin) returns `{ok:true, mode, selected, available, unresolved, missing, injected, canRemove}`; Settings → Skill Injector toggles + Save (the save must take effect on the next prompt without a restart), and each unresolved row shows a reason with Retry (plus Remove once `canRemove`); `each-prompt` affects the next reply; `start-only` stamps once per session, on the first session of a fresh process too, and a resume after restart does not double-stamp; a deleted skill reports `unknown` and the rest keep injecting.
-- Unit tests: `node --test --test-isolation=none "tests/**/*.mjs"` after `pnpm build` — 39 tests (`helpers.test.mjs` 30 against `lib/helpers.js`, `host.test.mjs` 9 driving `apply()` with a stub ctx). Use that in-process form under a confined shell, where `node --test tests/` (what `pnpm test` runs, canonical outside a confined shell) dies with `spawn EPERM` spawning a child per test file.
+- **After restart**: `GET /skill-injector/api` (in the browser, same origin) returns `{ok:true, mode, selected, showDock, available, unresolved, missing, injected, canRemove}`; Settings → Skill Injector toggles + Save (the save must take effect on the next prompt without a restart), and each unresolved row shows a reason with Retry (plus Remove once `canRemove`); `each-prompt` affects the next reply; `start-only` stamps once per session, on the first session of a fresh process too, and a resume after restart does not double-stamp; a deleted skill reports `unknown` and the rest keep injecting.
+- Unit tests: `node --test --test-isolation=none "tests/**/*.mjs"` after `pnpm build` — 42 tests (`helpers.test.mjs` 32 against `lib/helpers.js`, `host.test.mjs` 10 driving `apply()` with a stub ctx). Use that in-process form under a confined shell, where `node --test tests/` (what `pnpm test` runs, canonical outside a confined shell) dies with `spawn EPERM` spawning a child per test file.
 - Two invariants the unit suite cannot see, worth re-checking by hand after a DSH bump: (a) `lib/index.js`'s `createUserMessage(buildInjectionMessage(...))` result still passes the host's `validateSessionEventData`; (b) `dsh-settings`' `volatileForm`/`isVolatilePath` still accept a `{mode, selected}` patch.
 
 ## Notes for LLM crawlers

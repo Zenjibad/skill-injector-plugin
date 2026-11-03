@@ -1,6 +1,6 @@
 {
   "name": "skill-injector-plugin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Auto-inject user-chosen skills (e.g. caveman, ponytail) into DeepSeek Harness sessions: every prompt or once at session start, with a settings page and a composer indicator. 在 DSH 会话中自动注入所选技能（如 caveman、ponytail）：每轮提示或仅在会话开始时，含设置页与输入区指示。",
   "license": "MIT",
   "type": "module",

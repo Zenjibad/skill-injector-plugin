@@ -28,7 +28,7 @@
 | Feature | Description |
 | --- | --- |
 | ⚙️ **Settings page** | Settings → Skill Injector: checkbox list of available skills, injection-mode radio, save; unresolved skills are listed with the reason and a Retry button (plus Remove once a session has established scope) |
-| 🪧 **Composer indicator** | One line under the chat input: `Injected Skills: caveman, ponytail · Mode: each-prompt`, refreshed every 5s (with a ` · N unresolved` suffix while skills are unresolved) |
+| 🪧 **Composer indicator** | One line under the chat input: `Injected Skills: caveman, ponytail · Mode: each-prompt`, refreshed every 5s (with a ` · N unresolved` suffix while skills are unresolved); hide it with the dock-line toggle in the settings page |
 | 🔁 **Two injection modes** | `each-prompt` (system-prompt section, re-rendered every request) vs `start-only` (one durable skill-invocation message stamped at session start) |
 | 📚 **Live skill registry** | Reads skill bodies from `ctx.skills` at load time; no copied files; each selected skill is classified (`ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`) and a transient failure keeps injecting the last-good body |
 | 🧩 **Subagents included** | Injection applies to subagents too (consistent voice; no filtering) |
@@ -42,7 +42,7 @@ Settings page (browser)
   └─ user picks skills + injection mode
              │ PUT /skill-injector/api/config
 Host half (DSH process) ▼
-  └─ Loader Config: mode + selected (volatile settings fields)
+  └─ Loader Config: mode + selected + showDock (volatile settings fields)
   └─ ctx.skills.get(name) → live skill bodies from the skill registry
   └─ each-prompt: systemPrompt.section (re-rendered every request)
      OR start-only: agent.inject() on agent/created (one stamp per skill)
@@ -89,14 +89,15 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 
 ## ⚙️ Configuration
 
-No config file to edit. Settings are the plugin's Loader **Config** (`mode` + `selected`), edited from Settings → Skill Injector; saving writes them into the profile's patch file as this entry's `config:` block, so they survive restarts:
+No config file to edit. Settings are the plugin's Loader **Config** (`mode` + `selected` + `showDock`), edited from Settings → Skill Injector; saving writes them into the profile's patch file as this entry's `config:` block, so they survive restarts:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `'each-prompt'` | Injection mode: `'each-prompt'` (system-prompt section, every request) or `'start-only'` (one stamped message at session start) |
 | `selected` | `[]` | Kebab-case skill names to inject (max 16, validated; duplicates deduped) |
+| `showDock` | `true` | Render the dock line under the chat input; set `false` to hide it (the settings page still shows the same state) |
 
-Both fields are declared `.volatile()`, which is what lets DSH persist an edit without reloading the plugin — a Save takes effect on the next prompt and keeps the settings page and dock line live. An empty or invalid value degrades to `{ mode: 'each-prompt', selected: [] }`.
+All three fields are declared `.volatile()`, which is what lets DSH persist an edit without reloading the plugin — a Save takes effect on the next prompt and keeps the settings page and dock line live. An empty or invalid value degrades to `{ mode: 'each-prompt', selected: [], showDock: true }`.
 
 ## ❓ FAQ
 

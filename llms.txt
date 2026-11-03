@@ -12,7 +12,7 @@ Targets **DeepSeek Harness 0.2.x** (built and verified against `0.2.1-rc.5`).
 - [Install](README.md#-quick-start): packaged profile plugin — `dsh plugin --profile web add <spec>` (local dir or `git+https://github.com/<org>/skill-injector-plugin.git`), then restart DSH. `dsh.bundle` (`cordis.patch.yml`) mounts the host half; `dsh.client` + `exports["./client"]` register the browser half. Survives restarts, no cordis_define.
 - [Behavior](README.md#️-how-it-works): host reads skill bodies from the live `ctx.skills` registry and injects them two ways — `each-prompt` (a `systemPrompt.section` re-rendered every request) or `start-only` (one `agent.inject()` stamp per skill on `agent/created`, deduped). Serves the snapshot over `GET /skill-injector/api` (webServer route).
 - [UI seats](README.md#-features): `settings.section` id `skill-injector` (checkbox list + mode radio + save) and `conversation.composer.dock` id `skill-injector-dock` (active-skills line), fed by a single 5s poller.
-- [Configuration](README.md#️-configuration): the plugin's Loader **Config** — `mode` (`'each-prompt'` default | `'start-only'`) and `selected` (kebab-case skill names, default `[]`, max 16) — both `.volatile()`, persisted by `ctx.settings.update()` into the profile patch. No config file to edit.
+- [Configuration](README.md#️-configuration): the plugin's Loader **Config** — `mode` (`'each-prompt'` default | `'start-only'`) and `selected` (kebab-case skill names, default `[]`, max 16) and `showDock` (default `true`) — all `.volatile()`, persisted by `ctx.settings.update()` into the profile patch. No config file to edit.
 - [Failure mode](README.md#-faq): each selected skill is classified `ready` / `unknown` / `unavailable` / `load-failed` / `no-scope`; transient states keep injecting the last-good body while `unknown` (complete + scoped catalog read, name absent) drops it. Unresolved rows show a reason with Retry, and Remove appears once a scoped read has run (`canRemove`). Routes always return JSON (`{ok:false,error}`).
 
 ## Documentation
@@ -27,11 +27,11 @@ Targets **DeepSeek Harness 0.2.x** (built and verified against `0.2.1-rc.5`).
 
 ## Source layout
 
-- [src/index.ts](src/index.ts): the host half — exported `Config` (volatile `mode` + `selected`), `resolveSelection` (catalog snapshot + per-name classification), `systemPrompt.section` (each-prompt), two-pass `agent/created` injection (start-only), `webServer` JSON routes.
+- [src/index.ts](src/index.ts): the host half — exported `Config` (volatile `mode` + `selected` + `showDock`), `resolveSelection` (catalog snapshot + per-name classification), `systemPrompt.section` (each-prompt), two-pass `agent/created` injection (start-only), `webServer` JSON routes.
 - [src/helpers.ts](src/helpers.ts): the pure helpers — selection validation, prompt-brace escaping, injection-message builder, `classifySelection`, `applyBodies`, `cachedSuffix`.
 - [src/client/index.tsx](src/client/index.tsx): the client bundle — single 5s poller, `React.createElement` settings form + dock line, `--dsw-alias-*` theming.
 - [cordis.patch.yml](cordis.patch.yml): `dsh.bundle` patch inserting the plugin row.
 - [tsdown.config.ts](tsdown.config.ts): builds host (node ESM) + helpers + client (CJS ModuleLoader closure).
-- [tests/helpers.test.mjs](tests/helpers.test.mjs): node:test unit tests against `lib/helpers.js` (30 tests).
-- [tests/host.test.mjs](tests/host.test.mjs): node:test smoke tests (9) driving `apply()` with a stub ctx (Config contract, resolve states, last-good retention through the rendered section, the `canRemove` scope gate, cold-cache stamping and dedupe, the scope-transition pass key, the live-config Save path, lazy scope recovery, the `PUT` config route, brace escaping).
+- [tests/helpers.test.mjs](tests/helpers.test.mjs): node:test unit tests against `lib/helpers.js` (32 tests).
+- [tests/host.test.mjs](tests/host.test.mjs): node:test smoke tests (10) driving `apply()` with a stub ctx (Config contract, resolve states, last-good retention through the rendered section, the `canRemove` scope gate, cold-cache stamping and dedupe, the scope-transition pass key, the live-config Save path, lazy scope recovery, the `PUT` config route, brace escaping).
 - [tests/fixtures/sample-skill.json](tests/fixtures/sample-skill.json): real-shape skill definition sample.

@@ -39,12 +39,18 @@ const HIDDEN = {
 function makeConfig(initial) {
   let mode = initial.mode
   let selected = initial.selected
+  let showDock = initial.showDock ?? true
   return {
-    config: { mode: { get: () => mode }, selected: { get: () => selected } },
-    current: () => ({ mode, selected }),
+    config: {
+      mode: { get: () => mode },
+      selected: { get: () => selected },
+      showDock: { get: () => showDock },
+    },
+    current: () => ({ mode, selected, showDock }),
     commit(patch) {
       if (patch.mode !== undefined) mode = patch.mode
       if (patch.selected !== undefined) selected = patch.selected
+      if (patch.showDock !== undefined) showDock = patch.showDock
     },
   }
 }
@@ -88,7 +94,7 @@ function makeHarness(initial, skills, services = {}) {
       update: async (ns, patch) => {
         updates.push([ns, patch])
         store.commit(patch)
-        await emit('loader/volatile-update', [['mode'], ['selected']])
+        await emit('loader/volatile-update', [['mode'], ['selected'], ['showDock']])
       },
     },
     skills,
@@ -179,6 +185,7 @@ test('the entry declares a volatile Config schema, its service deps, and its nam
   const resolved = std.validate({}).value
   assert.deepEqual(resolved.mode.get(), 'each-prompt')
   assert.deepEqual(resolved.selected.get(), [])
+  assert.deepEqual(resolved.showDock.get(), true, 'the dock line stays visible unless opted out')
   assert.deepEqual(Config({ mode: 'start-only' }).selected.get(), [])
   assert.ok(std.validate({ mode: 'nope' }).issues.length > 0, 'an unknown mode must be rejected')
 })
@@ -446,8 +453,11 @@ test('a Save persists the entry Config and takes effect without a reload', async
   assert.equal(ok.status, 200)
   assert.equal(ok.snap.ok, true)
   assert.deepEqual(ok.snap.selected, ['ponytail'])
+  assert.equal(ok.snap.showDock, true, 'a body without showDock keeps the default')
   // Persisted as the Loader entry's Config, addressed by the profile entry id.
-  assert.deepEqual(h.updates, [['renamed-entry', { mode: 'each-prompt', selected: ['ponytail'] }]])
+  assert.deepEqual(h.updates, [
+    ['renamed-entry', { mode: 'each-prompt', selected: ['ponytail'], showDock: true }],
+  ])
 
   // The same instance now serves the new selection: no re-apply, no lost scope.
   const afterSave = await snapshot(h.routes)
@@ -462,6 +472,32 @@ test('a Save persists the entry Config and takes effect without a reload', async
   const invalid = await put(JSON.stringify({ mode: 'nope', selected: [] }))
   assert.equal(invalid.status, 400)
   assert.equal(invalid.snap.ok, false)
+})
+
+test('showDock is reported live and persists an opt-out without a reload', async () => {
+  const h = makeHarness({ mode: 'each-prompt', selected: ['ponytail'] }, scopedRegistry([PONYTAIL]))
+  apply(h.ctx, h.config)
+
+  assert.equal((await snapshot(h.routes)).showDock, true, 'the dock line is visible by default')
+
+  const res = makeRes()
+  await h.routes.get('/skill-injector/api/config')(
+    [JSON.stringify({ mode: 'each-prompt', selected: ['ponytail'], showDock: false })],
+    res,
+  )
+  assert.equal(res.status, 200)
+  assert.equal(JSON.parse(res.body).showDock, false)
+
+  // The same instance reports the opt-out: the client polls this and drops the line.
+  assert.equal((await snapshot(h.routes)).showDock, false, 'no reload needed for the opt-out to apply')
+
+  const bad = makeRes()
+  await h.routes.get('/skill-injector/api/config')(
+    [JSON.stringify({ mode: 'each-prompt', selected: [], showDock: 'yes' })],
+    bad,
+  )
+  assert.equal(bad.status, 400)
+  assert.equal(JSON.parse(bad.body).ok, false)
 })
 
 test('the section escapes braces while a stamped message stays raw', async () => {
