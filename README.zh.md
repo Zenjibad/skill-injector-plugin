@@ -42,10 +42,10 @@
   └─ 用户选择技能 + 注入模式
              │ PUT /skill-injector/api/config
 Host 半部（DSH 进程） ▼
-  └─ skill-injector 设置命名空间（mode + selected）
+  └─ Loader Config：mode + selected（volatile 设置字段）
   └─ ctx.skills.get(name) → 从技能注册表读取实时技能正文
   └─ each-prompt：systemPrompt.section（每次请求重新渲染）
-     或 start-only：agent/session-start 时 agent.inject()（每技能盖戳一条）
+     或 start-only：agent/created 时 agent.inject()（每技能盖戳一条）
   └─ webServer 路由 GET /skill-injector/api → JSON 快照
              │
 Client bundle（浏览器） ▼
@@ -83,19 +83,20 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 
 ### 依赖
 
+- **DeepSeek Harness 0.2.x**（针对 `0.2.1-rc.5` 构建并验证）。0.1.x 上不存在本插件使用的设置与 agent 生命周期 API。
 - 技能需存在于 `~/.agents/skills`（或 `ctx.skills` 注册表读取的其他已配置技能根目录）。
 - 未选择任何技能 → 不注入任何内容；输入区指示显示 `Injected Skills: none · Mode: each-prompt`，设置页仍正常工作。
 
 ## ⚙️ 配置
 
-无配置文件。设置位于 `skill-injector` 设置命名空间，通过 设置 → Skill Injector 编辑，并持久化到用户设置文档：
+无需手工编辑配置文件。设置即插件的 Loader **Config**（`mode` + `selected`），通过 设置 → Skill Injector 编辑；保存会把它们写入 profile 补丁文件中本插件的 `config:` 块，因此重启后依然保留：
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `mode` | `'each-prompt'` | 注入模式：`'each-prompt'`（系统提示词分区，每次请求）或 `'start-only'`（会话开始时盖戳一条消息） |
 | `selected` | `[]` | 要注入的 kebab-case 技能名（最多 16 个，经校验；重复项去重） |
 
-命名空间通过 `ctx.settings.register('skill-injector', schema, { base })` 注册——存储的用户分区自动叠加在 base 之上，因此空值/无效的存储值会回退到 `{ mode: 'each-prompt', selected: [] }`。
+两个字段都声明为 `.volatile()`——正因如此，DSH 可以在不重载插件的前提下持久化修改：保存后下一次提示即生效，设置页与输入区指示保持在线。空值或无效值会回退到 `{ mode: 'each-prompt', selected: [] }`。
 
 ## ❓ 常见问题
 
@@ -120,7 +121,7 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 ## ⚠️ 安全说明
 
 - 插件对技能注册表**只读**——绝不写入、重命名或删除技能文件。
-- 选择保存在**用户设置文档**中（与 DSH 其他设置同一存储）。
+- 选择保存在 **profile 补丁文件**中（与 DSH 其他插件配置同一位置）。
 - 注入内容是技能**自身可信的本地 markdown**；不从网络获取任何内容。
 - 在 `each-prompt`（系统提示词分区）路径中，技能正文里的 `{{` 会被转义，以免严格变量插值失败；`start-only` 消息不参与插值，保留原始内容。
 
@@ -129,7 +130,7 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 ```
 skill-injector-plugin/
 ├── src/
-│   ├── index.ts            # Host 半部：设置命名空间、resolveSelection（分类 + 上一次正文）、分区 + 会话启动注入、路由
+│   ├── index.ts            # Host 半部：volatile Config（mode + selected）、resolveSelection（分类 + 上一次正文）、分区 + agent/created 注入、路由
 │   ├── helpers.ts          # 纯函数：validateSelection、escapePromptBraces、buildInjectionMessage、classifySelection、applyBodies
 │   └── client/index.tsx    # Client bundle：5 秒轮询、设置表单、输入区指示行
 ├── cordis.patch.yml        # dsh.bundle 补丁（启动时插入插件行）

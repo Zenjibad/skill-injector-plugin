@@ -1,2 +1,11 @@
+# pnpm workspace settings for this package repo.
+#
+# nodeLinker: hoisted — Windows installs get junctions instead of symlinks, and
+# Node resolves a package's nested imports from the junction path rather than
+# its realpath, so a strict (isolated) store hides tsdown's own dependencies
+# from it and the build dies on `Cannot find package 'consola'`. A hoisted
+# node_modules puts them where resolution actually looks.
+nodeLinker: hoisted
+
 allowBuilds:
   esbuild: false

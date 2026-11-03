@@ -1,6 +1,6 @@
 {
   "name": "skill-injector-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Auto-inject user-chosen skills (e.g. caveman, ponytail) into DeepSeek Harness sessions: every prompt or once at session start, with a settings page and a composer indicator. 在 DSH 会话中自动注入所选技能（如 caveman、ponytail）：每轮提示或仅在会话开始时，含设置页与输入区指示。",
   "license": "MIT",
   "type": "module",
@@ -30,10 +30,7 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots"
-      ],
+      "inject": [],
       "platform": "web"
     }
   },
@@ -49,27 +46,23 @@
     "ai-agent"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "peerDependencies": {
     "react": "^18.2.0",
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "^4.0.5"
   },
   "peerDependenciesMeta": {
     "react": { "optional": true },
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-client-runtime": { "optional": true },
-    "@deepseek-ai/dsh-client-ui-slots": { "optional": true }
+    "@deepseek-ai/cordis": { "optional": true }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.5",
+    "@deepseek-ai/dsh-skill": "^0.2.1-rc.5",
+    "@deepseek-ai/schemastery": "^3.18.5"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/cordis": "^4.0.5",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.1",
     "react": "^18.2.0",

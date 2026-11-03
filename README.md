@@ -42,10 +42,10 @@ Settings page (browser)
   └─ user picks skills + injection mode
              │ PUT /skill-injector/api/config
 Host half (DSH process) ▼
-  └─ skill-injector settings namespace (mode + selected)
+  └─ Loader Config: mode + selected (volatile settings fields)
   └─ ctx.skills.get(name) → live skill bodies from the skill registry
   └─ each-prompt: systemPrompt.section (re-rendered every request)
-     OR start-only: agent.inject() on agent/session-start (one stamp per skill)
+     OR start-only: agent.inject() on agent/created (one stamp per skill)
   └─ webServer route GET /skill-injector/api → JSON snapshot
              │
 Client bundle (browser) ▼
@@ -83,19 +83,20 @@ dsh plugin --profile web add git+https://github.com/<org>/skill-injector-plugin.
 
 ### Requirements
 
+- **DeepSeek Harness 0.2.x** (built and verified against `0.2.1-rc.5`). On 0.1.x the settings and agent-lifecycle APIs this plugin targets do not exist.
 - Skills exist in `~/.agents/skills` (or another configured skill root the `ctx.skills` registry reads).
 - No skill selected → nothing is injected; the dock line reads `Injected Skills: none · Mode: each-prompt` and the settings page still works.
 
 ## ⚙️ Configuration
 
-No config file. Settings live in the `skill-injector` settings namespace, edited from Settings → Skill Injector and persisted in the user settings document:
+No config file to edit. Settings are the plugin's Loader **Config** (`mode` + `selected`), edited from Settings → Skill Injector; saving writes them into the profile's patch file as this entry's `config:` block, so they survive restarts:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `'each-prompt'` | Injection mode: `'each-prompt'` (system-prompt section, every request) or `'start-only'` (one stamped message at session start) |
 | `selected` | `[]` | Kebab-case skill names to inject (max 16, validated; duplicates deduped) |
 
-The namespace is registered via `ctx.settings.register('skill-injector', schema, { base })` — the stored user section layers over the base automatically, so an empty/invalid stored value falls back to `{ mode: 'each-prompt', selected: [] }`.
+Both fields are declared `.volatile()`, which is what lets DSH persist an edit without reloading the plugin — a Save takes effect on the next prompt and keeps the settings page and dock line live. An empty or invalid value degrades to `{ mode: 'each-prompt', selected: [] }`.
 
 ## ❓ FAQ
 
@@ -120,7 +121,7 @@ A: `dsh plugin --profile web rm skill-injector-plugin` (or delete the profile de
 ## ⚠️ Security notes
 
 - The plugin is **read-only** over the skill registry — it never writes, renames, or deletes skill files.
-- The selection is stored in the **user settings document** (same store as other DSH settings).
+- The selection is stored in the **profile patch file** (the same place DSH stores other plugin configuration).
 - Injected content is the skill's **own trusted local markdown**; nothing is fetched from the network.
 - In the `each-prompt` (system-prompt section) path, `{{` in skill bodies is escaped to keep strict variable interpolation from failing; `start-only` messages are not interpolated, so they keep the raw content.
 
@@ -129,7 +130,7 @@ A: `dsh plugin --profile web rm skill-injector-plugin` (or delete the profile de
 ```
 skill-injector-plugin/
 ├── src/
-│   ├── index.ts            # host half: settings namespace, resolveSelection (classification + last-good bodies), section + session-start injection, routes
+│   ├── index.ts            # host half: volatile Config (mode + selected), resolveSelection (classification + last-good bodies), section + agent/created injection, routes
 │   ├── helpers.ts          # pure helpers: validateSelection, escapePromptBraces, buildInjectionMessage, classifySelection, applyBodies
 │   └── client/index.tsx    # client bundle: 5s poller, settings form, dock line
 ├── cordis.patch.yml        # dsh.bundle patch (inserts the plugin row on boot)
